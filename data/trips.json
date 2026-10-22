@@ -3,7 +3,7 @@
   {"trip_id": "TRIP-002", "employee_id": "EMP-004", "destination": "대전", "start_date": "2026-10-19", "return_date": "2026-10-20", "status": "미정산"},
   {"trip_id": "TRIP-003", "employee_id": "EMP-005", "destination": "광주", "start_date": "2026-10-12", "return_date": "2026-10-14", "status": "미정산"},
   {"trip_id": "TRIP-004", "employee_id": "EMP-006", "destination": "울산", "start_date": "2026-10-07", "return_date": "2026-10-08", "status": "미정산"},
-  {"trip_id": "TRIP-005", "employee_id": "EMP-001", "destination": "제주", "start_date": "2026-10-01", "return_date": "2026-10-02", "status": "제출완료"},
+  {"trip_id": "TRIP-005", "employee_id": "EMP-001", "destination": "제주", "start_date": "2026-10-01", "return_date": "2026-10-02", "status": "제출완료", "submitted_date": "2026-10-08"},
   {"trip_id": "TRIP-006", "employee_id": "EMP-007", "destination": "수원", "start_date": "2026-10-21", "return_date": "2026-10-21", "status": "미정산"},
   {"trip_id": "TRIP-007", "employee_id": "EMP-002", "destination": "대구", "start_date": "2026-10-19", "return_date": "2026-10-20", "status": "미정산"},
   {"trip_id": "TRIP-008", "employee_id": "EMP-003", "destination": "광주", "start_date": "2026-10-12", "return_date": "2026-10-13", "status": "미정산"}

@@ -71,3 +71,12 @@ def test_confirm_message_counts_approved_exceptions():
     result, _ = tools._run_check(trip, "EMP-006")
     assert result["submittable"]
     assert "예외 승인 완료 1건 포함" in tools._confirm_message(trip, result)
+
+
+def test_submission_record_sets_submission_date():
+    """화면에서 제출한 건은 제출 기록 시각의 날짜가 제출일이 되고, 기한은 그 날짜로 판정한다."""
+    tools.save_submission("TRIP-001", "EMP-001")
+    trip, _ = tools._find_trip("TRIP-001", "EMP-001")
+    assert trip["status"] == "제출완료" and len(trip["submitted_date"]) == 10
+    result, _ = tools._run_check(trip, "EMP-001")
+    assert result["deadline"]["reference_date"] == trip["submitted_date"] and result["action_needed_count"] == 0

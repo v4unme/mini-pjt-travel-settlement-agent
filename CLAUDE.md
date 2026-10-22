@@ -29,7 +29,7 @@ src/drafting.py      예외 결재 사유서 초안 (LCEL 체인은 사유 문�
 src/retriever.py     RAG 파이프라인 (규정 문서 청킹·임베딩·검색)
 src/guards.py        입력·출력 가드레일 함수 (타인 조회·인젝션 판정 체인, 카드번호 마스킹). 그래프 노드 연결은 agent.py 에서 한다
 src/tracer.py        트레이스 기록 콜백 (API 응답의 trace 와 파일 기록)
-src/api.py           FastAPI 서버 (POST /query, 시연 화면 GET /, 직원 목록 GET /employees,
+src/api.py           FastAPI 서버 (POST /query, 시연 화면 GET /, 직원 목록 GET /employees, 내 출장 정산 현황 GET /trips/mine,
                      시연용 부서장 결재함 GET /approvals/inbox · POST /approvals/{id}/decision,
                      시연용 영수증 첨부 GET /receipts/missing · POST /receipts/{expense_id} — Agent 범위 밖, 모델 호출 없음.
                      영수증은 파일 이름·크기만 받고 내용은 받지도 읽지도 않는다)

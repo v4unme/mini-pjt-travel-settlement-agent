@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field
 from agent import ROOT, ask, build_graph, current_turn, message_text, pending_interrupt, resume
 from tools import (
     _load as load_data, approver_inbox, attach_receipt, decide_approval, get_employee, missing_receipts_for,
+    my_trip_overview,
 )
 from tracer import TraceRecorder
 
@@ -130,6 +131,14 @@ def employees():
     managers = {e["manager_id"] for e in staff if e.get("manager_id")}
     return [{**{k: e[k] for k in ("employee_id", "name", "department", "grade")},
              "role": "부서장" if e["employee_id"] in managers else "직원"} for e in staff]
+
+
+@app.get("/trips/mine")
+def trips_mine(x_employee_id: str | None = Header(default=None)):
+    """시연 화면의 내 출장 정산 현황 표. 본인 출장만, 점검 계산 결과 그대로 (모델 호출 없음)."""
+    if not x_employee_id or get_employee(x_employee_id) is None:
+        raise HTTPException(status_code=403, detail="등록되지 않은 직원입니다.")
+    return my_trip_overview(x_employee_id)
 
 
 # ---------------------------------------------------------------- 시연용 영수증 첨부 (Agent 범위 밖, 모델 호출 없음)

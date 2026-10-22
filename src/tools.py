@@ -14,7 +14,7 @@ from langgraph.types import interrupt
 import retriever
 from drafting import compose_request, polish_reason
 from guards import mask_card
-from settlement import STATUS_NEEDED, check_trip
+from settlement import STATUS_APPROVED, STATUS_NEEDED, STATUS_PENDING, check_trip
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
@@ -116,6 +116,49 @@ def save_approval_request(trip_id: str, kind: str, expense_ids: list[str], reaso
     return approval_id
 
 
+# ---------------------------------------------------------------- 시연 화면의 내 출장 정산 현황 (LLM 없음, 점검 계산을 그대로 쓴다)
+
+def my_trip_overview(employee_id: str) -> list[dict]:
+    """직원 본인 출장별 정산 현황: 정산 대상 건수·합계, 상태, 조치 내역, 정산 기한.
+
+    상태(kind): done 제출완료 / empty 결제 내역 없음 / ok 제출 가능 / pending 결재 대기만 남음 / action 조치 필요
+    """
+    rows = []
+    for trip in _load("trips.json"):
+        if trip["employee_id"] != employee_id:
+            continue
+        trip = _with_status(trip)
+        row = {"trip_id": trip["trip_id"], "destination": trip["destination"],
+               "start_date": trip["start_date"], "return_date": trip["return_date"]}
+        result, _ = _run_check(trip, employee_id)
+        if result is None:
+            rows.append({**row, "kind": "empty", "status": "결제 내역 없음", "selected_count": 0, "total_amount": "0원",
+                         "detail": [], "deadline": None, "submittable": False})
+            continue
+        overs = result["over_limits"] + ([result["deadline"]] if result["deadline"]["passed"] else [])
+        needed = sum(1 for o in overs if o["status"] == STATUS_NEEDED)
+        pending = sum(1 for o in overs if o["status"] == STATUS_PENDING)
+        approved = sum(1 for o in overs if o["status"] == STATUS_APPROVED)
+        missing = len(result["missing_receipts"])
+        detail = [f"{label} {n}" for label, n in (("영수증 누락", missing), ("예외 결재 필요", needed),
+                                                  ("결재 대기", pending), ("예외 승인 완료", approved)) if n]
+        if trip["status"] == SUBMITTED:
+            kind, status, detail = "done", "제출완료", []  # 제출이 끝난 건에는 남은 조치를 표시하지 않는다
+        elif result["submittable"]:
+            kind, status = "ok", "제출 가능"
+        elif missing == 0 and needed == 0:
+            kind, status = "pending", f"결재 대기 {pending}건"
+        else:
+            kind, status = "action", f"조치 필요 {result['action_needed_count']}건"
+        deadline = result["deadline"]
+        rows.append({**row, "kind": kind, "status": status, "selected_count": len(result["items"]),
+                     "total_amount": result["total_amount"], "detail": detail,
+                     "deadline": {"date": deadline["deadline"], "passed": deadline["passed"],
+                                  "remaining_business_days": deadline["remaining_business_days"]},
+                     "submittable": result["submittable"]})
+    return rows
+
+
 # ---------------------------------------------------------------- 시연용 영수증 첨부 (Agent 도구가 아니다. 파일 내용은 받지도 읽지도 않는다)
 
 def load_expenses(trip_id: str) -> list[dict]:
@@ -210,8 +253,11 @@ def decide_approval(approval_id: str, approver_id: str, decision: str) -> tuple[
 
 
 def _with_status(trip: dict) -> dict:
-    """원본 출장 데이터에 제출 기록을 덮어씌운 사본을 돌려준다."""
-    return {**trip, "status": SUBMITTED} if trip["trip_id"] in load_submissions() else trip
+    """원본 출장 데이터에 제출 기록을 덮어씌운 사본을 돌려준다. 제출일은 제출 기록 시각의 날짜다."""
+    record = load_submissions().get(trip["trip_id"])
+    if record is None:
+        return trip
+    return {**trip, "status": SUBMITTED, "submitted_date": record["submitted_at"][:10]}
 
 
 def is_approval(answer: str) -> bool:
@@ -308,6 +354,9 @@ def check_settlement(trip_id: str, runtime: ToolRuntime[Context]) -> tuple[str, 
     # 근거 조항은 모델이 검색할지 고르지 않고 점검 결과로 정해 붙인다
     refs = retriever.get_sections(policy_topics(result))
     result["policy_refs"] = refs
+    if result["settlement_status"] == SUBMITTED:
+        result["note"] = (f"이미 제출완료된 출장 건이다 (제출일 {result['submitted_date']}). "
+                          "요약은 '요약: 제출완료' 로 쓰고, 남은 조치나 제출 안내를 하지 않는다.")
     return _dump(result), refs
 
 

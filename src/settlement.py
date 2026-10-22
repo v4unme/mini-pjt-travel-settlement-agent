@@ -105,23 +105,29 @@ def check_trip(trip: dict, expenses: list[dict], grade: str, approvals: list[dic
             })
     over_limits.sort(key=lambda o: (o["date"], o["category"]))
 
-    # 3) 정산 기한 (출장 건 단위)
+    # 3) 정산 기한 (출장 건 단위). 이미 제출한 건은 오늘이 아니라 제출일 기준으로 판정한다
+    already_submitted = trip["status"] == "제출완료"
+    submitted_date = trip.get("submitted_date")
+    reference_date = date.fromisoformat(submitted_date) if already_submitted and submitted_date else base_date
     return_date = date.fromisoformat(trip["return_date"])
     deadline = settlement_deadline(return_date, holidays)
-    passed = base_date > deadline
+    passed = reference_date > deadline
     deadline_info = {
         "deadline": deadline.isoformat(),
         "passed": passed,
-        "remaining_business_days": 0 if passed else business_days_between(base_date, deadline, holidays),
-        "elapsed_business_days": business_days_between(deadline, base_date, holidays) if passed else 0,
-        **(_approval_status(approvals, "기한초과") if passed else {"status": "기한 내", "approval_ids": []}),
+        "reference_date": reference_date.isoformat(),
+        "remaining_business_days": 0 if passed or already_submitted else business_days_between(base_date, deadline, holidays),
+        "elapsed_business_days": business_days_between(deadline, reference_date, holidays) if passed else 0,
+        **(_approval_status(approvals, "기한초과") if passed
+           else {"status": "기한 내 제출" if already_submitted else "기한 내", "approval_ids": []}),
     }
 
-    # 4) 조치 필요 건수와 제출 가능 여부
+    # 4) 조치 필요 건수와 제출 가능 여부 (이미 제출한 건은 남은 조치가 없다)
     actions = len(missing)
     actions += sum(1 for o in over_limits if o["status"] != STATUS_APPROVED)
     actions += 1 if passed and deadline_info["status"] != STATUS_APPROVED else 0
-    already_submitted = trip["status"] == "제출완료"
+    if already_submitted:
+        actions = 0
 
     return {
         "trip_id": trip["trip_id"],
@@ -131,6 +137,7 @@ def check_trip(trip: dict, expenses: list[dict], grade: str, approvals: list[dic
         "limits": {k: won(v) for k, v in limits.items()},
         "base_date": base_date.isoformat(),
         "settlement_status": trip["status"],
+        "submitted_date": submitted_date if already_submitted else None,
         "items": [
             {k: e[k] for k in ("expense_id", "date", "category", "merchant", "nights", "receipt_attached")}
             | {"amount": won(e["amount"])}

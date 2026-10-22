@@ -123,9 +123,11 @@ def build_graph(checkpointer=None):
         """마지막 답변의 카드번호를 가리고, 점검 답변이면 고정 안내 문구를 붙인다."""
         turn = current_turn(state["messages"])
         last = turn[-1]
-        # 점검 결과가 실제로 나왔을 때만 안내 문구를 붙인다 ('데이터 없음'·'권한 없음' 이면 점검한 것이 아니다)
+        # 제출 전 점검 결과가 실제로 나왔을 때만 안내 문구를 붙인다
+        # ('데이터 없음'·'권한 없음' 이면 점검한 것이 아니고, 이미 제출완료된 건은 '제출 전 확인' 이 아니다)
         checked = any(isinstance(m, ToolMessage) and m.name == "check_settlement"
-                      and not message_text(m).startswith((NO_DATA, NO_PERMISSION)) for m in turn)
+                      and not message_text(m).startswith((NO_DATA, NO_PERMISSION))
+                      and '"settlement_status": "제출완료"' not in message_text(m) for m in turn)
         return {"messages": [AIMessage(content=finalize_answer(message_text(last), checked), id=last.id)]}
 
     builder = StateGraph(State, context_schema=Context)

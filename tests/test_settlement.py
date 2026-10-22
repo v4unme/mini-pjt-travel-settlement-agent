@@ -254,3 +254,22 @@ def test_get_sections_returns_policy_text():
     refs = get_sections(["예외 결재", "없는 조항", "증빙"])
     assert [r["doc_id"] for r in refs] == ["예외 결재", "증빙"]
     assert "개인 부담으로 처리하지 않습니다" in refs[0]["text"]
+
+
+# ---------------------------------------------------------------- 제출완료 건의 기한 (제출일 기준)
+
+def test_submitted_trip_deadline_uses_submission_date():
+    """TRIP-005: 마감 10-15, 제출일 10-08 → 기준일(10-21)이 지났어도 '기한 내 제출', 남은 조치 0건."""
+    r = run_data_trip("TRIP-005")
+    d = r["deadline"]
+    assert d["deadline"] == "2026-10-15" and d["reference_date"] == "2026-10-08"
+    assert not d["passed"] and d["status"] == "기한 내 제출"
+    assert r["action_needed_count"] == 0 and not r["submittable"] and r["submitted_date"] == "2026-10-08"
+
+
+def test_submitted_late_still_shows_late():
+    """마감 뒤에 제출한 건은 제출일 기준으로 경과로 판정한다 (결재가 없으면 예외 결재 필요)."""
+    trip = make_trip(return_date="2026-10-02", status="제출완료") | {"submitted_date": "2026-10-20"}
+    r = check_trip(trip, [make_expense("E1", "2026-10-02", "식비", 10000)], "평직원", [], HOLIDAYS, BASE)
+    assert r["deadline"]["passed"] and r["deadline"]["reference_date"] == "2026-10-20"
+    assert r["action_needed_count"] == 0  # 이미 제출했으므로 남은 조치는 없다
