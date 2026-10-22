@@ -29,11 +29,15 @@ src/drafting.py      예외 결재 사유서 초안 (LCEL 체인은 사유 문�
 src/retriever.py     RAG 파이프라인 (규정 문서 청킹·임베딩·검색)
 src/guards.py        입력·출력 가드레일 함수 (타인 조회·인젝션 판정 체인, 카드번호 마스킹). 그래프 노드 연결은 agent.py 에서 한다
 src/tracer.py        트레이스 기록 콜백 (API 응답의 trace 와 파일 기록)
-src/api.py           FastAPI 서버 (POST /query)
+src/api.py           FastAPI 서버 (POST /query, 시연 화면 GET /, 직원 목록 GET /employees,
+                     시연용 부서장 결재함 GET /approvals/inbox · POST /approvals/{id}/decision,
+                     시연용 영수증 첨부 GET /receipts/missing · POST /receipts/{expense_id} — Agent 범위 밖, 모델 호출 없음.
+                     영수증은 파일 이름·크기만 받고 내용은 받지도 읽지도 않는다)
+web/index.html       시연 화면 (HTML·CSS·JS 단일 파일, 외부 라이브러리 없음. /query 규약을 그대로 호출)
 data/                더미 데이터 JSON 과 data/policy/ 규정 문서
 evaluation/          test_queries.csv(8컬럼, 아래 평가 규약), run_eval.py, round1_report.md, round2_report.md,
                      hitl_scenarios.py·hitl_report.md (사람 승인 여러 턴 대화 검증)
-state/               실행 중 생기는 기록: submissions.json(제출), approvals.json(이 Agent 로 요청한 예외 결재), drafts.json(승인 대기 중 사유서 문단). 커밋 제외. data/ 원본은 바꾸지 않는다
+state/               실행 중 생기는 기록: submissions.json(제출), approvals.json(이 Agent 로 요청한 예외 결재), drafts.json(승인 대기 중 사유서 문단), receipts.json(영수증 첨부 기록). 커밋 제외. data/ 원본은 바꾸지 않는다
 tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출 없음)
 ```
 

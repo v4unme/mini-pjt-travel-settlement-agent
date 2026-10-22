@@ -170,10 +170,60 @@ def scenario_exception_request_without_reason(client):
     ]
 
 
+def scenario_full_loop_with_manager(client):
+    """정하은: 광주 출장 초과 전부 예외 결재 요청 → 승인 → 부서장(시연용 결재함) 승인 → 재점검 제출 가능 → 제출 → 승인 → 제출완료."""
+    s = Session(client, "EMP-005")
+    s.say("광주 출장(TRIP-003) 한도 초과 건 전부 예외 결재 올려줘. 사유는 행사 일정상 KTX 연결 택시와 행사장 인근 호텔만 가능했어요.")
+    s.say("승인")
+    pending = [a for a in client.get("/approvals/inbox", headers={"X-Employee-Id": "EMP-010"}).json() if a["trip_id"] == "TRIP-003"]
+    decided = [client.post(f"/approvals/{a['approval_id']}/decision", json={"decision": "승인"},
+                           headers={"X-Employee-Id": "EMP-010"}).status_code for a in pending]
+    submit = Session(client, "EMP-005")
+    first = submit.say("광주 출장(TRIP-003) 정산서 제출해줘").json()
+    submit.say("승인")
+    return [
+        ("부서장 결재함에 TRIP-003 요청이 올라옴", len(pending) >= 1),
+        ("부서장 승인 처리 200", bool(decided) and all(code == 200 for code in decided)),
+        ("승인 후 제출 요청이 승인 대기로 멈춤 (조치 필요 0건)", waiting(first)),
+        ("제출 확인 문구에 예외 승인 완료 2건 표시", "예외 승인 완료 2건" in first["answer"]),
+        ("최종 승인 후 제출 기록에 TRIP-003", "TRIP-003" in load_submissions()),
+    ]
+
+
+def scenario_full_loop_with_receipt(client):
+    """최민준: 대전 출장 — 예외 결재(없으면 요청) → 부서장 승인 → 영수증 첨부(이름·크기만) → 재점검 → 제출 → 승인 → 제출완료."""
+    manager = {"X-Employee-Id": "EMP-010"}
+    if not [a for a in client.get("/approvals/inbox", headers=manager).json() if a["trip_id"] == "TRIP-002"]:
+        s = Session(client, "EMP-004")
+        s.say("대전 출장(TRIP-002) 식비 한도 초과 건 예외 결재 올려줘. 사유는 고객사 담당자와 저녁 업무 미팅이 길어져서야.")
+        s.say("승인")
+    pending = [a for a in client.get("/approvals/inbox", headers=manager).json() if a["trip_id"] == "TRIP-002"]
+    decided = [client.post(f"/approvals/{a['approval_id']}/decision", json={"decision": "승인"}, headers=manager).status_code
+               for a in pending]
+    missing_before = client.get("/receipts/missing", headers={"X-Employee-Id": "EMP-004"}).json()
+    attached = client.post("/receipts/EXP-007", json={"file_name": "dummy_receipt.pdf", "size": 2048},
+                           headers={"X-Employee-Id": "EMP-004"})
+    other = client.post("/receipts/EXP-007", json={"file_name": "x.pdf", "size": 1}, headers={"X-Employee-Id": "EMP-008"})
+    missing_after = client.get("/receipts/missing", headers={"X-Employee-Id": "EMP-004"}).json()
+    submit = Session(client, "EMP-004")
+    first = submit.say("대전 출장(TRIP-002) 정산서 제출해줘").json()
+    submit.say("승인")
+    return [
+        ("부서장 승인 처리 200", bool(decided) and all(code == 200 for code in decided)),
+        ("첨부 전 누락 목록에 EXP-007", [m["expense_id"] for m in missing_before] == ["EXP-007"]),
+        ("영수증 첨부 200 (파일 이름·크기만 전송)", attached.status_code == 200),
+        ("다른 직원의 첨부는 403", other.status_code == 403),
+        ("첨부 후 누락 목록 비어 있음", missing_after == []),
+        ("제출 요청이 승인 대기로 멈춤 (조치 필요 0건)", waiting(first)),
+        ("최종 승인 후 제출 기록에 TRIP-002", "TRIP-002" in load_submissions()),
+    ]
+
+
 SCENARIOS = [scenario_submit_and_approve, scenario_resubmit_blocked, scenario_reject,
              scenario_blocked_by_issues, scenario_approval_status, scenario_other_employee_cannot_approve,
              scenario_exception_request_approve, scenario_exception_request_reject,
-             scenario_exception_request_not_needed, scenario_exception_request_without_reason]
+             scenario_exception_request_not_needed, scenario_exception_request_without_reason,
+             scenario_full_loop_with_manager, scenario_full_loop_with_receipt]
 
 
 def write_report(results: list[tuple[str, str, list]]):

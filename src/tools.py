@@ -116,6 +116,99 @@ def save_approval_request(trip_id: str, kind: str, expense_ids: list[str], reaso
     return approval_id
 
 
+# ---------------------------------------------------------------- 시연용 영수증 첨부 (Agent 도구가 아니다. 파일 내용은 받지도 읽지도 않는다)
+
+def load_expenses(trip_id: str) -> list[dict]:
+    """출장 건의 결제 내역 = 원본 데이터 + 첨부 기록(상태 파일)을 반영한 영수증 첨부 여부."""
+    receipts = _read_state("receipts.json", {})
+    return [{**e, "receipt_attached": True} if e["expense_id"] in receipts else e
+            for e in _load("expenses.json") if e["trip_id"] == trip_id]
+
+
+def missing_receipts_for(employee_id: str) -> list[dict]:
+    """직원 본인의 미제출 출장에서 영수증이 없는 정산 대상 결제 목록."""
+    items = []
+    for trip in _load("trips.json"):
+        if trip["employee_id"] != employee_id or _with_status(trip)["status"] == SUBMITTED:
+            continue
+        for e in load_expenses(trip["trip_id"]):
+            if e["selected"] and not e["receipt_attached"]:
+                items.append({"expense_id": e["expense_id"], "trip_id": trip["trip_id"], "destination": trip["destination"],
+                              "date": e["date"], "category": e["category"], "merchant": e["merchant"],
+                              "amount": f"{e['amount']:,}원"})
+    return items
+
+
+def attach_receipt(expense_id: str, employee_id: str, file_name: str, size: int) -> tuple[dict | None, str | None]:
+    """영수증 첨부를 기록한다. 파일 이름·크기만 남기며 파일 내용은 다루지 않는다. (기록, 오류 메시지)
+
+    본인 출장의, 제출 전, 정산 대상으로 선택한, 아직 첨부되지 않은 결제만 첨부할 수 있다.
+    """
+    expense = next((e for e in _load("expenses.json") if e["expense_id"] == expense_id), None)
+    if expense is None:
+        return None, f"{expense_id} 결제가 없습니다."
+    trip = next(t for t in _load("trips.json") if t["trip_id"] == expense["trip_id"])
+    if trip["employee_id"] != employee_id:
+        return None, NO_PERMISSION
+    if _with_status(trip)["status"] == SUBMITTED:
+        return None, f"{trip['trip_id']} 출장 건은 이미 제출완료 상태라 첨부할 수 없습니다."
+    if not expense["selected"]:
+        return None, "정산 대상으로 선택한 결제에만 영수증을 첨부합니다."
+    receipts = _read_state("receipts.json", {})
+    if expense["receipt_attached"] or expense_id in receipts:
+        return None, f"{expense_id} 는 이미 영수증이 첨부되어 있습니다."
+    if not (file_name or "").strip():
+        return None, "첨부할 파일을 선택해 주세요."
+    receipts[expense_id] = {"trip_id": trip["trip_id"], "employee_id": employee_id, "file_name": file_name.strip(),
+                            "size": int(size or 0), "attached_at": time.strftime("%Y-%m-%d %H:%M:%S")}
+    _write_state("receipts.json", receipts)
+    return {"expense_id": expense_id, **receipts[expense_id]}, None
+
+
+# ---------------------------------------------------------------- 시연용 부서장 결재 (Agent 도구가 아니다. 모델 없이 코드로만 처리)
+
+def approver_inbox(approver_id: str) -> list[dict]:
+    """결재자 본인에게 올라온 '요청됨' 예외 결재 목록. 출장·요청자·초과 금액을 함께 돌려준다."""
+    inbox = []
+    for a in _load("approvals.json") + _read_state("approvals.json", []):
+        if a["approver_id"] != approver_id or a["status"] != "요청됨":
+            continue
+        trip = next(t for t in _load("trips.json") if t["trip_id"] == a["trip_id"])
+        requester = get_employee(trip["employee_id"])
+        result, _ = _run_check(_with_status(trip), trip["employee_id"])
+        if a["type"] == "한도초과":
+            targets = [f"{o['date']} {o['category']} 초과 {o['over_amount']}" for o in (result or {}).get("over_limits", [])
+                       if set(o["expense_ids"]) & set(a["expense_ids"])]
+        else:
+            targets = [f"정산 기한 {result['deadline']['deadline']} 경과"] if result else []
+        inbox.append({"approval_id": a["approval_id"], "type": a["type"], "trip_id": trip["trip_id"],
+                      "destination": trip["destination"], "requester": f"{requester['name']} ({requester['employee_id']})",
+                      "expense_ids": a["expense_ids"], "targets": targets, "reason": a.get("reason", ""),
+                      "requested_at": a.get("requested_at", "")})
+    return inbox
+
+
+def decide_approval(approval_id: str, approver_id: str, decision: str) -> tuple[dict | None, str | None]:
+    """결재자가 예외 결재를 승인·반려한다. (갱신된 결재, 오류 메시지) 를 돌려준다.
+
+    결재자 본인만, '요청됨' 상태인 건만 처리할 수 있다. 원본 데이터(data/approvals.json)의 결재는 바꾸지 않는다.
+    """
+    if decision not in ("승인", "반려"):
+        return None, "결정은 '승인' 또는 '반려'만 가능합니다."
+    records = _read_state("approvals.json", [])
+    target = next((a for a in records if a["approval_id"] == approval_id), None)
+    if target is None:
+        return None, f"{approval_id} 는 처리할 수 있는 결재 요청이 아닙니다."
+    if target["approver_id"] != approver_id:
+        return None, "이 결재의 결재자만 승인·반려할 수 있습니다."
+    if target["status"] != "요청됨":
+        return None, f"이미 '{target['status']}' 처리된 결재입니다."
+    target["status"] = decision
+    target["decided_at"] = time.strftime("%Y-%m-%d %H:%M:%S")
+    _write_state("approvals.json", records)
+    return target, None
+
+
 def _with_status(trip: dict) -> dict:
     """원본 출장 데이터에 제출 기록을 덮어씌운 사본을 돌려준다."""
     return {**trip, "status": SUBMITTED} if trip["trip_id"] in load_submissions() else trip
@@ -162,7 +255,7 @@ def get_trip_expenses(trip_id: str, runtime: ToolRuntime[Context]) -> str:
     trip, error = _find_trip(trip_id, runtime.context.employee_id)
     if error:
         return error
-    expenses = [e for e in _load("expenses.json") if e["trip_id"] == trip["trip_id"]]
+    expenses = load_expenses(trip["trip_id"])
     if not expenses:
         return f"{NO_DATA}: {trip_id} 출장 건에 결제 내역이 없습니다."
     return _dump([
@@ -220,7 +313,7 @@ def check_settlement(trip_id: str, runtime: ToolRuntime[Context]) -> tuple[str, 
 
 def _run_check(trip: dict, employee_id: str) -> tuple[dict | None, str | None]:
     """출장 1건을 점검한다. (점검 결과, 오류 메시지) 를 돌려준다."""
-    expenses = [e for e in _load("expenses.json") if e["trip_id"] == trip["trip_id"]]
+    expenses = load_expenses(trip["trip_id"])
     if not expenses:
         return None, f"{NO_DATA}: {trip['trip_id']} 출장 건에 결제 내역이 없습니다."
     approvals = load_approvals(trip["trip_id"])
