@@ -1,0 +1,30 @@
+[
+  {"expense_id": "EXP-001", "trip_id": "TRIP-001", "date": "2026-10-15", "merchant": "부산역 돼지국밥", "category": "식비", "amount": 45000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "4012-3456-7890-1111"},
+  {"expense_id": "EXP-002", "trip_id": "TRIP-001", "date": "2026-10-15", "merchant": "코레일 KTX", "category": "교통", "amount": 59800, "nights": null, "selected": true, "receipt_attached": true, "card_no": "4012-3456-7890-1111"},
+  {"expense_id": "EXP-003", "trip_id": "TRIP-001", "date": "2026-10-16", "merchant": "해운대 비즈니스호텔", "category": "숙박", "amount": 120000, "nights": 1, "selected": true, "receipt_attached": true, "card_no": "4012-3456-7890-1111"},
+
+  {"expense_id": "EXP-004", "trip_id": "TRIP-002", "date": "2026-10-19", "merchant": "대전역 칼국수", "category": "식비", "amount": 15000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "1234-5678-9012-3456"},
+  {"expense_id": "EXP-005", "trip_id": "TRIP-002", "date": "2026-10-19", "merchant": "둔산동 한우식당", "category": "식비", "amount": 68000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "1234-5678-9012-3456"},
+  {"expense_id": "EXP-006", "trip_id": "TRIP-002", "date": "2026-10-19", "merchant": "코레일 KTX", "category": "교통", "amount": 23700, "nights": null, "selected": true, "receipt_attached": true, "card_no": "1234-5678-9012-3456"},
+  {"expense_id": "EXP-007", "trip_id": "TRIP-002", "date": "2026-10-20", "merchant": "유성 스테이호텔", "category": "숙박", "amount": 130000, "nights": 1, "selected": true, "receipt_attached": false, "card_no": "1234-5678-9012-3456"},
+  {"expense_id": "EXP-008", "trip_id": "TRIP-002", "date": "2026-10-20", "merchant": "성심당 본점", "category": "식비", "amount": 50000, "nights": null, "selected": false, "receipt_attached": false, "card_no": "1234-5678-9012-3456"},
+
+  {"expense_id": "EXP-011", "trip_id": "TRIP-003", "date": "2026-10-12", "merchant": "코레일 KTX", "category": "교통", "amount": 52800, "nights": null, "selected": true, "receipt_attached": true, "card_no": "5310-2468-1357-2222"},
+  {"expense_id": "EXP-012", "trip_id": "TRIP-003", "date": "2026-10-12", "merchant": "광주 개인택시", "category": "교통", "amount": 61000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "5310-2468-1357-2222"},
+  {"expense_id": "EXP-014", "trip_id": "TRIP-003", "date": "2026-10-13", "merchant": "상무지구 한정식", "category": "식비", "amount": 55000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "5310-2468-1357-2222"},
+  {"expense_id": "EXP-013", "trip_id": "TRIP-003", "date": "2026-10-14", "merchant": "광주 시티호텔", "category": "숙박", "amount": 340000, "nights": 2, "selected": true, "receipt_attached": true, "card_no": "5310-2468-1357-2222"},
+
+  {"expense_id": "EXP-015", "trip_id": "TRIP-004", "date": "2026-10-07", "merchant": "울산 물회집", "category": "식비", "amount": 40000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "6011-9876-5432-3333"},
+  {"expense_id": "EXP-017", "trip_id": "TRIP-004", "date": "2026-10-07", "merchant": "코레일 KTX", "category": "교통", "amount": 48000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "6011-9876-5432-3333"},
+  {"expense_id": "EXP-016", "trip_id": "TRIP-004", "date": "2026-10-08", "merchant": "울산 롯데시티", "category": "숙박", "amount": 110000, "nights": 1, "selected": true, "receipt_attached": true, "card_no": "6011-9876-5432-3333"},
+
+  {"expense_id": "EXP-018", "trip_id": "TRIP-005", "date": "2026-10-01", "merchant": "제주항공", "category": "교통", "amount": 95000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "4012-3456-7890-1111"},
+  {"expense_id": "EXP-019", "trip_id": "TRIP-005", "date": "2026-10-02", "merchant": "제주 오션호텔", "category": "숙박", "amount": 140000, "nights": 1, "selected": true, "receipt_attached": true, "card_no": "4012-3456-7890-1111"},
+
+  {"expense_id": "EXP-020", "trip_id": "TRIP-007", "date": "2026-10-19", "merchant": "동성로 한우명가", "category": "식비", "amount": 90000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "3782-8224-6310-4444"},
+  {"expense_id": "EXP-022", "trip_id": "TRIP-007", "date": "2026-10-19", "merchant": "코레일 KTX", "category": "교통", "amount": 43500, "nights": null, "selected": true, "receipt_attached": true, "card_no": "3782-8224-6310-4444"},
+  {"expense_id": "EXP-021", "trip_id": "TRIP-007", "date": "2026-10-20", "merchant": "대구 인터불고호텔", "category": "숙박", "amount": 180000, "nights": 1, "selected": true, "receipt_attached": true, "card_no": "3782-8224-6310-4444"},
+
+  {"expense_id": "EXP-030", "trip_id": "TRIP-008", "date": "2026-10-12", "merchant": "충장로 떡갈비", "category": "식비", "amount": 52000, "nights": null, "selected": true, "receipt_attached": true, "card_no": "5555-4444-3333-5555"},
+  {"expense_id": "EXP-031", "trip_id": "TRIP-008", "date": "2026-10-13", "merchant": "광주 시티호텔", "category": "숙박", "amount": 125000, "nights": 1, "selected": true, "receipt_attached": true, "card_no": "5555-4444-3333-5555"}
+]

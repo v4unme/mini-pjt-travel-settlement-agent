@@ -1,0 +1,11 @@
+[
+  {"employee_id": "EMP-001", "name": "김하늘", "department": "클라우드운영팀", "grade": "평직원", "manager_id": "EMP-010"},
+  {"employee_id": "EMP-002", "name": "박도윤", "department": "물류플랫폼팀", "grade": "임원", "manager_id": "EMP-010"},
+  {"employee_id": "EMP-003", "name": "이서준", "department": "클라우드운영팀", "grade": "평직원", "manager_id": "EMP-010"},
+  {"employee_id": "EMP-004", "name": "최민준", "department": "물류플랫폼팀", "grade": "평직원", "manager_id": "EMP-010"},
+  {"employee_id": "EMP-005", "name": "정하은", "department": "데이터분석팀", "grade": "평직원", "manager_id": "EMP-010"},
+  {"employee_id": "EMP-006", "name": "한지우", "department": "보안관제팀", "grade": "평직원", "manager_id": "EMP-010"},
+  {"employee_id": "EMP-007", "name": "오세린", "department": "클라우드운영팀", "grade": "평직원", "manager_id": "EMP-010"},
+  {"employee_id": "EMP-008", "name": "윤재원", "department": "물류플랫폼팀", "grade": "평직원", "manager_id": "EMP-010"},
+  {"employee_id": "EMP-010", "name": "강태호", "department": "IT서비스사업부", "grade": "임원", "manager_id": null}
+]

@@ -1,0 +1,3 @@
+[
+  {"approval_id": "APR-001", "trip_id": "TRIP-004", "type": "기한초과", "expense_ids": [], "reason": "현장 보안 점검 일정이 연장되어 복귀 후 정산이 지연됨", "status": "승인", "approver_id": "EMP-010"}
+]
