@@ -24,6 +24,8 @@
 src/agent.py         메인 그래프 (StateGraph 바깥 흐름 + create_agent 하위 그래프, 시스템 프롬프트, 체크포인터)
 src/tools.py         도메인 도구 7개 (@tool 정의만. 계산은 settlement.py 호출)
 src/settlement.py    정산 점검 계산 (한도·누락·기한·영업일). LLM 호출 없는 순수 함수
+src/llm.py           Bedrock 모델 생성 (그래프·도구·평가 공용)
+src/drafting.py      예외 결재 사유서 초안 (LCEL 체인은 사유 문장만, 숫자는 코드가 넣음)
 src/retriever.py     RAG 파이프라인 (규정 문서 청킹·임베딩·검색)
 src/guards.py        입력·출력 가드레일 함수 (타인 조회·인젝션 판정 체인, 카드번호 마스킹). 그래프 노드 연결은 agent.py 에서 한다
 src/tracer.py        트레이스 기록 콜백 (API 응답의 trace 와 파일 기록)
@@ -31,7 +33,7 @@ src/api.py           FastAPI 서버 (POST /query)
 data/                더미 데이터 JSON 과 data/policy/ 규정 문서
 evaluation/          test_queries.csv(8컬럼, 아래 평가 규약), run_eval.py, round1_report.md, round2_report.md,
                      hitl_scenarios.py·hitl_report.md (사람 승인 여러 턴 대화 검증)
-state/               실행 중 생기는 제출 기록 submissions.json (커밋 제외. data/ 원본은 바꾸지 않는다)
+state/               실행 중 생기는 기록: submissions.json(제출), approvals.json(이 Agent 로 요청한 예외 결재), drafts.json(승인 대기 중 사유서 문단). 커밋 제외. data/ 원본은 바꾸지 않는다
 tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출 없음)
 ```
 
@@ -53,6 +55,7 @@ tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출
 ## 구현 규약
 - 직원ID는 `create_agent(context_schema=...)` 의 런타임 컨텍스트로 넣고 도구는 `ToolRuntime` 으로 읽는다. 도구 인자에 employee_id 를 두지 않는다 (모델이 직원을 고를 수 없게)
 - 금액·날짜 계산은 `src/settlement.py` 에서만 한다. 모델에게 계산을 시키지 않는다
+- 사람 승인 도구는 재개 시 처음부터 다시 실행된다. interrupt 앞에서 모델을 부르면 결과를 상태 파일에 보관해 직원이 본 내용과 저장 내용이 같게 한다 (예: 사유서 문단)
 - 기준일(오늘)은 .env 의 `BASE_DATE` 가 있으면 그 값, 없으면 실제 오늘 날짜를 쓴다
 - 금액 표기는 `12,000원` 형식으로 통일한다 (평가의 숫자 정확 일치 기준)
 - 결제ID 형식 `EXP-001`, 출장ID `TRIP-001`, 직원ID `EMP-001`, 결재ID `APR-001`
@@ -90,7 +93,8 @@ tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출
 - 서버: `uvicorn src.api:app --reload`
 - 계산 테스트: `pytest tests` (LLM 없이 즉시 실행. settlement.py 를 고치면 반드시 먼저 돌린다)
 - 평가: `python evaluation/run_eval.py --round N` → 결과를 evaluation/ 에 저장 (`--ids`, `--regrade`, `--report` 옵션)
-- 승인 흐름 검증: `python evaluation/hitl_scenarios.py` → evaluation/hitl_report.md
+- 승인 흐름 검증: `python evaluation/hitl_scenarios.py` → evaluation/hitl_report.md (시나리오 이름 일부를 인자로 주면 그것만 실행)
+- RAGAS: `python evaluation/ragas_eval.py --round 2` → evaluation/ragas_report.md (저장된 답변 재사용, Agent 재실행 없음)
 
 ## 작업 방식
 - 계획을 먼저 보여 주고 승인받은 뒤 코드를 만든다

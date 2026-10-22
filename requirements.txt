@@ -22,3 +22,20 @@ uvicorn==0.54.0
 # 테스트·평가
 pytest==9.1.1
 httpx==0.28.1
+
+# RAGAS 평가 의존성. ragas 본체는 별도로 설치한다:
+#   pip install ragas==0.4.3 --no-deps
+# (ragas 가 요구하는 scikit-network 는 테스트셋 생성 전용이고 Python 3.14 용 wheel 이 없어 설치하지 않는다)
+datasets==5.1.0
+pandas==3.0.6
+tiktoken==0.14.0
+langchain-community==0.4.2
+langchain-openai==1.7.2
+openai==3.3.0
+instructor==1.17.0
+nest-asyncio==1.6.0
+appdirs==1.4.4
+diskcache==5.6.3
+rich==14.3.4
+pillow==13.0.0
+networkx==3.7

@@ -6,13 +6,15 @@ import time
 from dataclasses import dataclass
 from datetime import date
 from pathlib import Path
+from typing import Literal
 
 from langchain.tools import ToolRuntime, tool
 from langgraph.types import interrupt
 
 import retriever
+from drafting import compose_request, polish_reason
 from guards import mask_card
-from settlement import check_trip
+from settlement import STATUS_NEEDED, check_trip
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA_DIR = ROOT / "data"
@@ -21,6 +23,8 @@ NO_DATA = "데이터 없음"
 NO_PERMISSION = "권한 없음: 본인 출장 건만 조회할 수 있습니다."
 NOT_SUBMITTED = "제출하지 않음"
 SUBMITTED = "제출완료"
+NOT_REQUESTED = "결재요청안함"
+REQUESTED = "결재요청완료"
 
 # 직원 답변의 첫 단어가 이 중 하나면 승인으로 본다. 그 밖(애매한 답 포함)은 모두 거절로 처리한다.
 APPROVAL_WORDS = {"승인", "승인합니다", "승인해", "승인해줘", "승인해주세요",
@@ -74,6 +78,42 @@ def save_submission(trip_id: str, employee_id: str):
     path = _submissions_path()
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(records, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _state_file(name: str) -> Path:
+    """상태 폴더 안의 파일 경로."""
+    return _submissions_path().parent / name
+
+
+def _read_state(name: str, default):
+    """상태 파일을 읽는다. 없으면 default."""
+    path = _state_file(name)
+    return json.loads(path.read_text(encoding="utf-8")) if path.exists() else default
+
+
+def _write_state(name: str, value):
+    """상태 파일을 쓴다."""
+    path = _state_file(name)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(value, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def load_approvals(trip_id: str) -> list[dict]:
+    """출장 건의 예외 결재 = 원본 데이터(data/approvals.json) + 이 Agent 로 요청한 결재(상태 파일)."""
+    records = _load("approvals.json") + _read_state("approvals.json", [])
+    return [a for a in records if a["trip_id"] == trip_id]
+
+
+def save_approval_request(trip_id: str, kind: str, expense_ids: list[str], reason: str, approver_id: str) -> str:
+    """예외 결재 요청을 '요청됨' 상태로 기록하고 새 결재ID 를 돌려준다."""
+    requested = _read_state("approvals.json", [])
+    numbers = [int(a["approval_id"].split("-")[1]) for a in _load("approvals.json") + requested]
+    approval_id = f"APR-{max(numbers, default=0) + 1:03d}"
+    requested.append({"approval_id": approval_id, "trip_id": trip_id, "type": kind, "expense_ids": expense_ids,
+                      "reason": reason, "status": "요청됨", "approver_id": approver_id,
+                      "requested_at": time.strftime("%Y-%m-%d %H:%M:%S")})
+    _write_state("approvals.json", requested)
+    return approval_id
 
 
 def _with_status(trip: dict) -> dict:
@@ -183,7 +223,7 @@ def _run_check(trip: dict, employee_id: str) -> tuple[dict | None, str | None]:
     expenses = [e for e in _load("expenses.json") if e["trip_id"] == trip["trip_id"]]
     if not expenses:
         return None, f"{NO_DATA}: {trip['trip_id']} 출장 건에 결제 내역이 없습니다."
-    approvals = [a for a in _load("approvals.json") if a["trip_id"] == trip["trip_id"]]
+    approvals = load_approvals(trip["trip_id"])
     holidays = {date.fromisoformat(h["date"]) for h in _load("holidays.json")["holidays"]}
     grade = get_employee(employee_id)["grade"]
     result = check_trip(trip, expenses, grade, approvals, holidays, _base_date())
@@ -203,7 +243,7 @@ def get_approval_status(trip_id: str, runtime: ToolRuntime[Context]) -> str:
     trip, error = _find_trip(trip_id, runtime.context.employee_id)
     if error:
         return error
-    approvals = [a for a in _load("approvals.json") if a["trip_id"] == trip["trip_id"]]
+    approvals = load_approvals(trip["trip_id"])
     if not approvals:
         return f"{NO_DATA}: {trip_id} 출장 건에 예외 결재 내역이 없습니다."
     return _dump([
@@ -261,4 +301,87 @@ def submit_settlement(trip_id: str, runtime: ToolRuntime[Context]) -> str:
     return f"{SUBMITTED}: {trip_id} 정산서를 제출했습니다 (합계 {result['total_amount']})."
 
 
-TOOLS = [get_my_trips, get_trip_expenses, search_policy, check_settlement, get_approval_status, submit_settlement]
+def select_exception_targets(result: dict, kind: str, expense_ids: list[str] | None) -> tuple[list[dict], str | None]:
+    """예외 결재를 요청할 수 있는 대상인지 점검 결과로 확인한다. (대상 초과 항목, 거절 사유) 를 돌려준다.
+
+    한도초과: 실제로 한도를 넘었고 아직 결재가 없거나 반려된 항목만. 결제ID 를 안 주면 그런 항목 전부.
+    기한초과: 실제로 기한이 지났고 아직 결재가 없거나 반려된 경우만.
+    """
+    if kind == "기한초과":
+        deadline = result["deadline"]
+        if not deadline["passed"]:
+            return [], f"정산 기한({deadline['deadline']})이 지나지 않아 기한초과 결재가 필요 없습니다."
+        if deadline["status"] != STATUS_NEEDED:
+            return [], f"기한초과 결재가 이미 '{deadline['status']}' 상태입니다."
+        return [], None
+    if kind != "한도초과":
+        return [], "결재 유형은 한도초과 또는 기한초과입니다."
+    overs = result["over_limits"]
+    if not overs:
+        return [], "한도 초과 항목이 없어 한도초과 결재가 필요 없습니다."
+    if expense_ids:
+        over_ids = {i for o in overs for i in o["expense_ids"]}
+        unknown = [i for i in expense_ids if i not in over_ids]
+        if unknown:
+            return [], f"한도 초과가 아닌 결제입니다: {', '.join(unknown)}"
+        chosen = [o for o in overs if set(o["expense_ids"]) & set(expense_ids)]
+    else:
+        chosen = [o for o in overs if o["status"] == STATUS_NEEDED]
+    done = [o for o in chosen if o["status"] != STATUS_NEEDED]
+    if done:
+        return [], "이미 결재가 진행 중이거나 승인된 항목입니다: " + ", ".join(
+            f"{o['date']} {o['category']}({o['status']})" for o in done)
+    if not chosen:
+        return [], "결재가 필요한 한도 초과 항목이 없습니다 (이미 요청됐거나 승인됨)."
+    return chosen, None
+
+
+@tool
+def request_exception_approval(trip_id: str, kind: Literal["한도초과", "기한초과"], reason: str,
+                               runtime: ToolRuntime[Context], expense_ids: list[str] | None = None) -> str:
+    """한도 초과나 기한 초과 건의 사유서 초안을 만들어 부서장에게 예외 결재를 요청한다 (사람 승인 필요).
+
+    입력: trip_id, kind(한도초과/기한초과), reason(직원이 직접 말한 사유), expense_ids(한도초과 대상 결제ID, 생략하면 결재가 필요한 초과 항목 전부)
+    직원이 사유를 말하지 않았으면 호출하지 말고 먼저 사유를 묻는다.
+    시스템이 직원에게 사유서 초안을 보여 주고 확인을 받는다. 반환이 '결재요청완료' 일 때만 요청된 것이다.
+    """
+    employee_id = runtime.context.employee_id
+    trip, error = _find_trip(trip_id, employee_id)
+    if error:
+        return f"{NOT_REQUESTED}: {error}"
+    if len((reason or "").strip()) < 2:
+        return f"{NOT_REQUESTED}: 사유가 없습니다. 직원에게 예외 결재 사유를 먼저 물어보세요."
+    result, error = _run_check(trip, employee_id)
+    if error:
+        return f"{NOT_REQUESTED}: {error}"
+    targets, refusal = select_exception_targets(result, kind, expense_ids)
+    if refusal:
+        return f"{NOT_REQUESTED}: {refusal}"
+
+    employee = get_employee(employee_id)
+    approver = get_employee(employee["manager_id"]) or {"name": employee["manager_id"]}
+    target_ids = sorted({i for t in targets for i in t["expense_ids"]})
+    target_text = ", ".join(f"{t['date']} {t['category']} 초과" for t in targets) or "정산 기한 경과"
+
+    # 재개 시 도구가 처음부터 다시 실행되므로, 직원에게 보여 준 사유 문단을 보관해 같은 문구로 저장한다
+    key = "|".join([employee_id, trip_id, kind, ",".join(target_ids), reason.strip()])
+    drafts = _read_state("drafts.json", {})
+    if key not in drafts:
+        drafts[key] = polish_reason(kind, target_text, reason.strip())
+        _write_state("drafts.json", drafts)
+    reason_text = drafts[key]
+
+    # 사람 승인 (HITL): 사유서 초안을 보여 주고 직원 답변을 기다린다
+    answer = interrupt({"type": "exception_request_confirm", "trip_id": trip_id, "employee_id": employee_id,
+                        "message": compose_request(trip, kind, targets, result["deadline"], approver["name"], reason_text)})
+    drafts = _read_state("drafts.json", {})
+    drafts.pop(key, None)
+    _write_state("drafts.json", drafts)
+    if not is_approval(answer):
+        return f"{NOT_REQUESTED}: 직원이 승인하지 않아 예외 결재를 요청하지 않았습니다."
+    approval_id = save_approval_request(trip_id, kind, target_ids, reason_text, employee["manager_id"])
+    return f"{REQUESTED}: {approval_id} {kind} 예외 결재를 부서장 {approver['name']}에게 요청했습니다 (상태: 요청됨)."
+
+
+TOOLS = [get_my_trips, get_trip_expenses, search_policy, check_settlement, get_approval_status, submit_settlement,
+         request_exception_approval]

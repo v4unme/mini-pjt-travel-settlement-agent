@@ -20,7 +20,7 @@ os.environ["STATE_DIR"] = tempfile.mkdtemp(prefix="hitl_state_")  # 빈 제출 �
 from fastapi.testclient import TestClient  # noqa: E402
 
 from api import app  # noqa: E402
-from tools import load_submissions  # noqa: E402
+from tools import load_approvals, load_submissions  # noqa: E402
 
 
 class Session:
@@ -116,8 +116,64 @@ def scenario_other_employee_cannot_approve(client):
     ]
 
 
+def requested(trip_id: str) -> list[dict]:
+    """이 Agent 로 새로 요청된(요청됨 상태) 예외 결재 목록."""
+    return [a for a in load_approvals(trip_id) if a["status"] == "요청됨"]
+
+
+def scenario_exception_request_approve(client):
+    """최민준: 대전 출장 식비 초과 예외 결재 요청(사유 포함) → 사유서 초안 확인 → '승인' → 요청됨 기록 → 재점검 시 결재 대기."""
+    s = Session(client, "EMP-004")
+    first = s.say("대전 출장(TRIP-002) 식비 한도 초과 건 예외 결재 올려줘. 사유는 고객사 담당자와 저녁 업무 미팅이 길어져서야.").json()
+    second = s.say("승인").json()
+    recheck = Session(client, "EMP-004").say("대전 출장(TRIP-002) 정산 점검해줘").json()
+    return [
+        ("결재 요청에 승인 대기로 멈춤", waiting(first)),
+        ("사유서 초안에 2026-10-19 식비 초과 13,000원", "2026-10-19" in first["answer"] and "13,000원" in first["answer"]),
+        ("사유서 초안에 대상 결제 EXP-004, EXP-005", "EXP-004" in first["answer"] and "EXP-005" in first["answer"]),
+        ("'승인' 후 요청됨 결재 기록 생성", len(requested("TRIP-002")) == 1),
+        ("도구가 결재요청완료 반환", any(o.startswith("결재요청완료") for o in tool_outputs(second, "request_exception_approval"))),
+        # trace 의 도구 결과는 500자에서 잘리므로 답변으로 확인한다 (결재ID 는 숫자라 정확 일치)
+        ("재점검 답변에 새 결재ID APR-002 와 결재 대기", "APR-002" in recheck["answer"] and "결재 대기" in recheck["answer"]),
+    ]
+
+
+def scenario_exception_request_reject(client):
+    """정하은: 광주 출장 숙박 초과 예외 결재 요청 → 사유서 초안 확인 → '거절' → 기록 없음."""
+    s = Session(client, "EMP-005")
+    first = s.say("광주 출장(TRIP-003) 숙박비 초과 건 예외 결재 요청해줘. 사유는 행사장 근처에 남은 숙소가 그 호텔뿐이었어요.").json()
+    s.say("거절")
+    return [
+        ("결재 요청에 승인 대기로 멈춤", waiting(first)),
+        ("사유서 초안에 숙박 초과 40,000원", "40,000원" in first["answer"]),
+        ("'거절' 후 결재 기록 없음", requested("TRIP-003") == []),
+    ]
+
+
+def scenario_exception_request_not_needed(client):
+    """김하늘: 한도 초과가 없는 부산 출장에 결재 요청 → 확인 없이 거절, 기록 없음."""
+    body = Session(client, "EMP-001").say("부산 출장(TRIP-001) 한도초과 예외 결재 올려줘. 사유는 일정 변경이야.").json()
+    return [
+        ("승인 대기로 멈추지 않음", not waiting(body)),
+        ("결재 기록 없음", requested("TRIP-001") == []),
+    ]
+
+
+def scenario_exception_request_without_reason(client):
+    """정하은: 사유 없이 결재 요청 → 사유를 먼저 물어야 함 (승인 대기·기록 없음)."""
+    body = Session(client, "EMP-005").say("광주 출장(TRIP-003) 교통비 초과 건 예외 결재 올려줘").json()
+    outputs = tool_outputs(body, "request_exception_approval")
+    return [
+        ("승인 대기로 멈추지 않음", not waiting(body)),
+        ("결재 기록 없음", requested("TRIP-003") == []),
+        ("도구를 부르지 않았거나 '사유 없음' 으로 거절", not outputs or all(o.startswith("결재요청안함") for o in outputs)),
+    ]
+
+
 SCENARIOS = [scenario_submit_and_approve, scenario_resubmit_blocked, scenario_reject,
-             scenario_blocked_by_issues, scenario_approval_status, scenario_other_employee_cannot_approve]
+             scenario_blocked_by_issues, scenario_approval_status, scenario_other_employee_cannot_approve,
+             scenario_exception_request_approve, scenario_exception_request_reject,
+             scenario_exception_request_not_needed, scenario_exception_request_without_reason]
 
 
 def write_report(results: list[tuple[str, str, list]]):
@@ -139,9 +195,12 @@ def write_report(results: list[tuple[str, str, list]]):
 if __name__ == "__main__":
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
+    only = sys.argv[1:]  # 예: python evaluation/hitl_scenarios.py exception_request_approve (이름 일부로 골라 실행)
     results = []
     with TestClient(app) as client:
         for scenario in SCENARIOS:  # 순서가 중요하다: 제출 → 재제출 차단 순
+            if only and not any(name in scenario.__name__ for name in only):
+                continue
             checks = scenario(client)
             results.append((scenario.__name__, scenario.__doc__, checks))
             print(f"{'PASS' if all(ok for _, ok in checks) else 'FAIL'}  {scenario.__name__}")

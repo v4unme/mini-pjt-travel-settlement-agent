@@ -1,5 +1,4 @@
 """agent.py - 메인 그래프: input_guard → agent(create_agent) → output_guard, 위반 시 refuse"""
-import os
 import sqlite3
 import sys
 import uuid
@@ -7,7 +6,6 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 from langchain.agents import create_agent
-from langchain_aws import ChatBedrockConverse
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, MessagesState, StateGraph
@@ -15,12 +13,12 @@ from langgraph.runtime import Runtime
 from langgraph.types import Command
 
 from guards import DENY_INJECTION, DENY_OTHER, NO_POLICY, build_input_guard, finalize_answer
-from tools import TOOLS, Context, get_employee
+from llm import build_llm
+from tools import NO_DATA, NO_PERMISSION, TOOLS, Context, get_employee
 
 load_dotenv()
 
 ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_MODEL_ID = "us.anthropic.claude-sonnet-4-5-20250929-v1:0"
 
 SYSTEM_PROMPT = f"""너는 출장비 정산 사전 검토 Agent다. 로그인한 직원 본인의 국내 출장 정산서를 제출 전에 점검해 준다.
 
@@ -32,6 +30,7 @@ SYSTEM_PROMPT = f"""너는 출장비 정산 사전 검토 Agent다. 로그인한
 [근거와 계산]
 - 금액, 초과 금액, 1박 단가, 마감일, 영업일 수, 조치 필요 건수는 check_settlement 결과의 문자열을 그대로 쓴다. 직접 다시 계산하거나 반올림하지 않는다.
 - 규정 판단과 설명은 check_settlement 결과의 policy_refs 나 search_policy 결과만 근거로 하고, 근거 조항명을 '근거 규정: 조항명' 으로 적는다.
+- 규정에 관한 질문(어떤 항목이 정산되는지, 규정에 있는지 없는지 포함)이면 답하기 전에 반드시 search_policy 를 호출한다. 검색하지 않고 규정 내용을 말하거나 "규정에 없다"고 답하지 않는다.
 - 규정 질문인데 search_policy 결과에 그 내용이 없으면 추측하지 말고, 규정에 없다고 밝히고 인사·재무 담당자 확인을 안내한다(예: "{NO_POLICY}"). 규정이 다루는 범위를 짧게 덧붙여도 되지만 정산 가능·불가를 단정하지 않는다.
 - 도구 결과가 '데이터 없음' 이나 '권한 없음' 이면 지어내지 않는다.
 
@@ -65,6 +64,12 @@ check_settlement 결과의 policy_refs 가 점검 답변의 근거 조항이다.
 [결재 상태]
 예외 결재 상태를 물으면 get_approval_status 로 조회해 결재ID, 유형, 상태, 결재자를 알려 준다.
 
+[예외 결재 요청]
+- 한도 초과·기한 초과 건의 예외 결재(사유서) 요청이면 request_exception_approval 을 호출한다. 유형은 한도초과 또는 기한초과다.
+- 직원이 사유를 말하지 않았으면 도구를 호출하지 말고 사유를 먼저 묻는다. 사유를 지어내지 않는다.
+- 사유서 초안 확인은 시스템이 하므로 직접 확인 질문을 하지 않는다.
+- 도구 결과가 "결재요청완료" 로 시작할 때만 요청됐다고 말하고 결재ID 를 알려 준다. "결재요청안함" 이면 이유를 그대로 안내한다.
+
 [범위]
 국내 출장 정산 점검과 출장 규정 안내만 한다. 다른 직원의 정보는 다루지 않는다. 답변은 한국어 존댓말로 한다."""
 
@@ -72,15 +77,6 @@ check_settlement 결과의 policy_refs 가 점검 답변의 근거 조항이다.
 class State(MessagesState):
     """바깥 그래프 상태: 대화 메시지 + 입력 가드레일 판정."""
     verdict: str
-
-
-def build_llm():
-    """Bedrock Claude 모델을 만든다. 모델 ID·리전은 .env 에서 읽는다."""
-    return ChatBedrockConverse(
-        model=os.getenv("BEDROCK_MODEL_ID", DEFAULT_MODEL_ID),
-        region_name=os.getenv("AWS_DEFAULT_REGION", "us-east-1"),
-        temperature=0,
-    )
 
 
 def message_text(message) -> str:
@@ -127,7 +123,9 @@ def build_graph(checkpointer=None):
         """마지막 답변의 카드번호를 가리고, 점검 답변이면 고정 안내 문구를 붙인다."""
         turn = current_turn(state["messages"])
         last = turn[-1]
-        checked = any(isinstance(m, ToolMessage) and m.name == "check_settlement" for m in turn)
+        # 점검 결과가 실제로 나왔을 때만 안내 문구를 붙인다 ('데이터 없음'·'권한 없음' 이면 점검한 것이 아니다)
+        checked = any(isinstance(m, ToolMessage) and m.name == "check_settlement"
+                      and not message_text(m).startswith((NO_DATA, NO_PERMISSION)) for m in turn)
         return {"messages": [AIMessage(content=finalize_answer(message_text(last), checked), id=last.id)]}
 
     builder = StateGraph(State, context_schema=Context)

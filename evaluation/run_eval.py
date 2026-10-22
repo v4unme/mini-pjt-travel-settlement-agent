@@ -26,7 +26,7 @@ os.environ["STATE_DIR"] = tempfile.mkdtemp(prefix="eval_state_")  # 제출 기�
 from fastapi.testclient import TestClient  # noqa: E402
 from pydantic import BaseModel, Field, ValidationError  # noqa: E402
 
-from agent import build_llm  # noqa: E402
+from llm import build_llm  # noqa: E402
 from api import app  # noqa: E402
 # 정확히 일치해야 하는 것은 숫자 값뿐이다 (금액·날짜·건수·박수·영업일·결제ID·결재ID).
 # 문장 표현은 의미가 맞으면 통과이므로 Judge 가 판정한다.
