@@ -29,7 +29,9 @@ src/guards.py        입력·출력 가드레일 함수 (타인 조회·인젝�
 src/tracer.py        트레이스 기록 콜백 (API 응답의 trace 와 파일 기록)
 src/api.py           FastAPI 서버 (POST /query)
 data/                더미 데이터 JSON 과 data/policy/ 규정 문서
-evaluation/          test_queries.csv(8컬럼, 아래 평가 규약), run_eval.py, round1_report.md, round2_report.md
+evaluation/          test_queries.csv(8컬럼, 아래 평가 규약), run_eval.py, round1_report.md, round2_report.md,
+                     hitl_scenarios.py·hitl_report.md (사람 승인 여러 턴 대화 검증)
+state/               실행 중 생기는 제출 기록 submissions.json (커밋 제외. data/ 원본은 바꾸지 않는다)
 tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출 없음)
 ```
 
@@ -43,7 +45,10 @@ tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출
   - `X-Thread-Id`: 대화 ID. 없으면 새로 만들고 응답 헤더로 돌려준다
 - HITL(결재 요청·최종 제출) 흐름
   1. 도구가 `interrupt()` 로 멈추면 `answer` 에 확인할 내용(사유서 초안 또는 제출 요약)과 "승인 / 거절" 안내를 담는다
-  2. 같은 `X-Thread-Id` 로 다음 질문이 오면 `Command(resume=...)` 로 재개한다. "승인" 계열이면 실행, 그 외는 실행하지 않는다
+  2. 같은 `X-Thread-Id` 로 다음 질문이 오면 `Command(resume=...)` 로 재개한다. 승인 판정은 모델이 아니라 코드(`tools.is_approval`)가 한다: 답의 첫 단어가 승인·네·예·제출 계열이면 실행, 그 외(애매한 답 포함)는 실행하지 않는다
+  3. 승인 대기 중인 대화에는 처음 요청한 직원만 답할 수 있다. 다른 `X-Employee-Id` 면 403
+  4. 승인 대기 중이면 응답 `trace` 마지막에 `{"step": "interrupt", ...}` 단계가 붙는다
+- 제출 기록은 `data/trips.json` 을 바꾸지 않고 `STATE_DIR`(기본 `state/`)의 submissions.json 에 남기고, 조회 시 원본 상태 위에 덮어씌운다. 평가·시나리오 스크립트는 매번 빈 임시 폴더를 쓴다
 
 ## 구현 규약
 - 직원ID는 `create_agent(context_schema=...)` 의 런타임 컨텍스트로 넣고 도구는 `ToolRuntime` 으로 읽는다. 도구 인자에 employee_id 를 두지 않는다 (모델이 직원을 고를 수 없게)
@@ -84,7 +89,8 @@ tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출
 - 단독 실행: `python src/agent.py` (시험 질문 1개 실행)
 - 서버: `uvicorn src.api:app --reload`
 - 계산 테스트: `pytest tests` (LLM 없이 즉시 실행. settlement.py 를 고치면 반드시 먼저 돌린다)
-- 평가: `python evaluation/run_eval.py` → 결과를 evaluation/ 에 저장
+- 평가: `python evaluation/run_eval.py --round N` → 결과를 evaluation/ 에 저장 (`--ids`, `--regrade`, `--report` 옵션)
+- 승인 흐름 검증: `python evaluation/hitl_scenarios.py` → evaluation/hitl_report.md
 
 ## 작업 방식
 - 계획을 먼저 보여 주고 승인받은 뒤 코드를 만든다

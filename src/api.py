@@ -17,7 +17,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from pydantic import BaseModel, Field
 
-from agent import ROOT, ask, build_graph, current_turn, message_text
+from agent import ROOT, ask, build_graph, current_turn, message_text, pending_interrupt, resume
 from tools import get_employee
 from tracer import TraceRecorder
 
@@ -82,17 +82,30 @@ def query(
     thread_id = x_thread_id or str(uuid.uuid4())
     response.headers["X-Thread-Id"] = thread_id
 
+    graph = app.state.graph
     tracer = TraceRecorder(request_id=thread_id)
+    waiting = pending_interrupt(graph, thread_id)
+    if waiting and waiting.get("employee_id") != employee_id:
+        raise HTTPException(status_code=403, detail="승인 대기 중인 요청은 요청한 직원만 답할 수 있습니다.")
     try:
-        state = ask(app.state.graph, body.question, employee_id, thread_id, callbacks=[tracer])
+        if waiting:  # 승인 대기 중이면 이번 질문을 직원의 승인/거절 답변으로 보고 이어서 실행한다
+            state = resume(graph, body.question, employee_id, thread_id, callbacks=[tracer])
+            first_step = {"step": "resume", "input": body.question, "output": waiting.get("type", "")}
+        else:
+            state = ask(graph, body.question, employee_id, thread_id, callbacks=[tracer])
+            first_step = {"step": "input_guard", "input": body.question, "output": state["verdict"]}
     except Exception as error:
         if _is_throttled(error):
             raise HTTPException(status_code=503, detail="모델 호출 한도를 넘었습니다. 잠시 후 다시 시도해 주세요.")
         raise
 
     turn = current_turn(state["messages"])
-    guard_step = {"step": "input_guard", "input": body.question, "output": state["verdict"]}
-    return QueryResponse(answer=message_text(turn[-1]), contexts=_contexts(turn), trace=[guard_step] + tracer.steps)
+    trace = [first_step] + tracer.steps
+    if state.get("__interrupt__"):  # 사람 승인을 기다리며 멈춤: 확인 문구를 답으로 돌려준다
+        request = state["__interrupt__"][0].value
+        trace.append({"step": "interrupt", "input": request["type"], "output": request["message"]})
+        return QueryResponse(answer=request["message"], contexts=_contexts(turn), trace=trace)
+    return QueryResponse(answer=message_text(turn[-1]), contexts=_contexts(turn), trace=trace)
 
 
 @app.get("/health")

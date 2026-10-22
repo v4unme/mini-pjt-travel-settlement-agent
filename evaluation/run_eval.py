@@ -12,6 +12,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 import time
 import uuid
 from pathlib import Path
@@ -20,6 +21,7 @@ ROOT = Path(__file__).resolve().parent.parent
 EVAL_DIR = ROOT / "evaluation"
 sys.path.insert(0, str(ROOT / "src"))
 os.environ.setdefault("BASE_DATE", "2026-10-21")  # 채점 기준일 고정 (CLAUDE.md 평가 규약)
+os.environ["STATE_DIR"] = tempfile.mkdtemp(prefix="eval_state_")  # 제출 기록을 매번 빈 상태로 시작
 
 from fastapi.testclient import TestClient  # noqa: E402
 from pydantic import BaseModel, Field, ValidationError  # noqa: E402

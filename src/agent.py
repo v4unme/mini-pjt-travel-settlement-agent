@@ -12,6 +12,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.sqlite import SqliteSaver
 from langgraph.graph import END, START, MessagesState, StateGraph
 from langgraph.runtime import Runtime
+from langgraph.types import Command
 
 from guards import DENY_INJECTION, DENY_OTHER, NO_POLICY, build_input_guard, finalize_answer
 from tools import TOOLS, Context, get_employee
@@ -57,7 +58,12 @@ check_settlement 결과의 policy_refs 가 점검 답변의 근거 조항이다.
 고정 안내 문구는 시스템이 붙이므로 직접 쓰지 않는다.
 
 [제출 요청]
-아직 정산 제출 기능은 준비 중이다. 제출 요청을 받으면 check_settlement 로 점검한 뒤, 조치 필요 건이 남아 있으면 "제출하지 않음" 이라고 밝히고 남은 조치를 안내한다. 조치 필요 건이 없으면 제출 기능이 준비 중이라고 안내한다.
+- 정산 제출 요청이면 submit_settlement 를 호출한다. 제출 전 점검과 직원 확인은 도구와 시스템이 하므로, 직접 "승인하시겠습니까" 같은 확인 질문을 하지 않는다.
+- 도구 결과가 "제출완료" 로 시작할 때만 제출됐다고 말한다.
+- "제출하지 않음" 이면 제출하지 않았다고 밝히고 이유와 남은 조치(영수증 누락 결제ID, 초과 항목과 예외 결재 상태 등)를 안내한다.
+
+[결재 상태]
+예외 결재 상태를 물으면 get_approval_status 로 조회해 결재ID, 유형, 상태, 결재자를 알려 준다.
 
 [범위]
 국내 출장 정산 점검과 출장 규정 안내만 한다. 다른 직원의 정보는 다루지 않는다. 답변은 한국어 존댓말로 한다."""
@@ -141,6 +147,18 @@ def ask(graph, question: str, employee_id: str, thread_id: str | None = None, ca
     """질문 하나를 실행해 최종 상태를 돌려준다. callbacks 로 트레이서를 넘길 수 있다."""
     config = {"configurable": {"thread_id": thread_id or str(uuid.uuid4())}, "callbacks": callbacks or []}
     return graph.invoke({"messages": [HumanMessage(content=question)]}, config, context=Context(employee_id))
+
+
+def pending_interrupt(graph, thread_id: str) -> dict | None:
+    """이 대화가 사람 승인을 기다리는 중이면 그 interrupt 내용을, 아니면 None 을 돌려준다."""
+    interrupts = graph.get_state({"configurable": {"thread_id": thread_id}}).interrupts
+    return interrupts[0].value if interrupts else None
+
+
+def resume(graph, answer: str, employee_id: str, thread_id: str, callbacks=None) -> dict:
+    """승인 대기 중인 대화를 직원 답변으로 이어서 실행한다."""
+    config = {"configurable": {"thread_id": thread_id}, "callbacks": callbacks or []}
+    return graph.invoke(Command(resume=answer), config, context=Context(employee_id))
 
 
 if __name__ == "__main__":
