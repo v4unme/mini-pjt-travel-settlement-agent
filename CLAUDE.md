@@ -3,7 +3,7 @@
 무엇을 왜 만드는지는 `SERVICE.md` 가 기준이다. 이 문서는 어떻게 만드는지만 적는다. 둘이 충돌하면 SERVICE.md 를 따르고 사용자에게 알린다.
 
 ## 기술 스택
-- Python 3.11+, LangChain 1.x, LangGraph 1.x
+- Python 3.12+, LangChain 1.x, LangGraph 1.x
 - 모델: Amazon Bedrock `ChatBedrockConverse`, 모델 ID `us.anthropic.claude-sonnet-4-5-20250929-v1:0`, 리전 `us-east-1` (값은 .env 에서 읽는다)
 - 그래프: LangGraph `StateGraph` 로 바깥 흐름(가드레일 → Agent → 가드레일)을 직접 그리고, 그 안의 Agent 노드는 `langchain.agents` 의 `create_agent` 로 만든 그래프를 하위 그래프로 넣는다
   ```
@@ -26,7 +26,7 @@ src/tools.py         도메인 도구 7개 (@tool 정의만. 계산은 settlemen
 src/settlement.py    정산 점검 계산 (한도·누락·기한·영업일). LLM 호출 없는 순수 함수
 src/llm.py           Bedrock 모델 생성 (그래프·도구·평가 공용)
 src/drafting.py      예외 결재 사유서 초안 (LCEL 체인은 사유 문장만, 숫자는 코드가 넣음)
-src/retriever.py     RAG 파이프라인 (규정 문서 청킹·임베딩·검색)
+src/retriever.py     RAG 파이프라인 (규정 문서 청킹, 벡터 + BM25(kiwipiepy) 하이브리드 검색을 RRF 로 융합)
 src/guards.py        입력·출력 가드레일 함수 (타인 조회·인젝션 판정 체인, 카드번호 마스킹). 그래프 노드 연결은 agent.py 에서 한다
 src/tracer.py        트레이스 기록 콜백 (API 응답의 trace 와 파일 기록)
 src/api.py           FastAPI 서버 (POST /query, 시연 화면 GET /, 직원 목록 GET /employees, 내 출장 정산 현황 GET /trips/mine,
@@ -93,12 +93,14 @@ tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출
 - 경로는 프로젝트 루트 기준으로 계산한다 (`Path(__file__).resolve().parent.parent`)
 
 ## 실행
+- 실행 명령 모음: `./run.sh server|test|eval N|hitl|ragas N|reset`
+- Docker: `docker build -t travel-settlement-agent .` → `docker run --rm -p 8000:8000 --env-file .env travel-settlement-agent` (Python 3.12 이미지)
 - 단독 실행: `python src/agent.py` (시험 질문 1개 실행)
 - 서버: `uvicorn src.api:app --reload`
 - 계산 테스트: `pytest tests` (LLM 없이 즉시 실행. settlement.py 를 고치면 반드시 먼저 돌린다)
 - 평가: `python evaluation/run_eval.py --round N` → 결과를 evaluation/ 에 저장 (`--ids`, `--regrade`, `--report` 옵션)
 - 승인 흐름 검증: `python evaluation/hitl_scenarios.py` → evaluation/hitl_report.md (시나리오 이름 일부를 인자로 주면 그것만 실행)
-- RAGAS: `python evaluation/ragas_eval.py --round 2` → evaluation/ragas_report.md (저장된 답변 재사용, Agent 재실행 없음)
+- RAGAS: `python evaluation/ragas_eval.py --round N` → evaluation/ragas_round{N}_report.md (저장된 답변 재사용, Agent 재실행 없음)
 
 ## 작업 방식
 - 계획을 먼저 보여 주고 승인받은 뒤 코드를 만든다

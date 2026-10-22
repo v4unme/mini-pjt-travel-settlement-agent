@@ -94,7 +94,7 @@ def _mean(rows: list[dict], metric: str) -> float:
 
 
 def write_report(round_no: int, samples: list[dict], rows: list[dict], skipped: int):
-    """지표 평균(전체·유형별·보정 전 비교)과 문항별 점수를 evaluation/ragas_report.md 로 저장한다."""
+    """지표 평균(전체·유형별·보정 전 비교)과 문항별 점수를 evaluation/ragas_round{N}_report.md 로 저장한다."""
     by_kind = {kind: [r for s, r in zip(samples, rows) if s["kind"] == kind] for kind in ("규정 질문", "점검 질문")}
     before_path = EVAL_DIR / "results" / f"ragas_round{round_no}_uncorrected.json"
     before = json.loads(before_path.read_text(encoding="utf-8")) if before_path.exists() else []
@@ -126,7 +126,7 @@ def write_report(round_no: int, samples: list[dict], rows: list[dict], skipped: 
         lines.append(f"| {sample['id']} | {sample['category']} | {sample['kind']} | " + " | ".join(cells) + " |")
     lines += ["", "참고: answer_relevancy 는 '규정에 없으니 담당자에게 확인하라' 같은 답을 회피성 답변(noncommittal)으로 보고 0점을 준다. "
               "#7(규정에 없는 항목)은 정책상 올바른 답이지만 이 지표에서는 낮게 나올 수 있다."]
-    (EVAL_DIR / "ragas_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    (EVAL_DIR / f"ragas_round{round_no}_report.md").write_text("\n".join(lines) + "\n", encoding="utf-8")
     print("\n".join(lines[:18]))
 
 

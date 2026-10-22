@@ -11,7 +11,7 @@
 | Day | 패턴 | 이 프로젝트에서 활용한 방법 |
 |---|---|---|
 | Day 1 | LCEL 체인 + Pydantic 구조화 출력 | 입력 가드레일 판정 `프롬프트 \| 모델.with_structured_output(GuardVerdict)` ([guards.py](src/guards.py)), 예외 결재 사유서 문단 작성 ([drafting.py](src/drafting.py)), 평가 Judge 판정 |
-| Day 2 | RAG | 규정 문서를 `##` 조항 단위로 청킹 → Titan v2 임베딩 → Chroma 검색. 점검 답변의 근거 조항은 점검 결과로 정해 코드가 직접 붙임 ([retriever.py](src/retriever.py)) |
+| Day 2 | RAG (하이브리드) | 규정 문서를 `##` 조항 단위로 청킹 → Titan v2 임베딩 벡터 검색 + kiwipiepy 형태소 BM25 키워드 검색을 순위 융합(RRF). 점검 답변의 근거 조항은 점검 결과로 정해 코드가 직접 붙임 ([retriever.py](src/retriever.py)) |
 | Day 3 | ReAct · LangGraph | `create_agent`(모델 ↔ 도구 반복)를 하위 그래프로 넣고, 바깥 흐름은 `StateGraph` 와 조건부 분기로 직접 구성 ([agent.py](src/agent.py)) |
 | Day 4 | 도구 다중 결합 | 도메인 도구 7개. 직원ID는 질문이 아닌 런타임 컨텍스트로 주입해 모델이 다른 직원을 고를 수 없음 ([tools.py](src/tools.py)) |
 | Day 5 | 가드레일 | 입력: 타인 조회·프롬프트 인젝션 차단(도구 호출 전 거절). 출력: 카드번호 마스킹, 점검 안내 문구 부착 |
@@ -47,14 +47,27 @@ flowchart LR
 - 제출·결재 요청 기록은 원본 데이터를 바꾸지 않고 `state/` 에 따로 남겨 평가를 항상 같은 조건에서 재현할 수 있다.
 
 ## 실행 방법
+Python 3.12 이상. `.env.example` 을 `.env` 로 복사해 AWS 키를 넣는다 (`BASE_DATE=2026-10-21` 이면 평가와 같은 숫자가 나온다).
+
+**Docker (클린 환경 재현)**
+```bash
+docker build -t travel-settlement-agent .
+docker run --rm -p 8000:8000 --env-file .env travel-settlement-agent          # 서버 + 시연 화면
+docker run --rm --env-file .env travel-settlement-agent ./run.sh test          # 단위 테스트
+```
+
+**로컬**
 ```bash
 python -m venv .venv && .venv\Scripts\activate      # macOS·Linux: source .venv/bin/activate
 pip install -r requirements.txt
-copy .env.example .env                               # AWS 키와 BASE_DATE=2026-10-21 입력
+pip install ragas==0.4.3 --no-deps                   # RAGAS 평가용 (아래 회고 참고)
 
-pytest tests                                         # 계산·승인 판정 테스트 (LLM 호출 없음)
-python src/agent.py                                  # 시험 질문 3개 실행
-uvicorn src.api:app --reload                         # API 서버
+./run.sh test     # 단위 테스트 94건 (LLM 호출 없음)        = pytest tests
+./run.sh server   # API 서버 + 시연 화면                    = uvicorn src.api:app --port 8000
+./run.sh eval 3   # 인-아웃 세트 15건 → evaluation/round3_report.md
+./run.sh hitl     # 승인 흐름 여러 턴 검증 → evaluation/hitl_report.md
+./run.sh ragas 3  # 저장된 답변으로 RAGAS 측정 → evaluation/ragas_round3_report.md
+./run.sh reset    # 시연 상태(제출·결재·첨부 기록) 초기화
 ```
 
 **시연 화면:** 서버 실행 후 브라우저에서 http://localhost:8000/ 을 연다. 로그인 직원을 고르면 위쪽에 **내 출장 정산 현황** 표(정산 대상 건수·합계, 상태, 정산 기한)가 나온다. 표의 숫자는 점검 계산 결과 그대로이며(모델 호출 없음), 출장을 누르면 Agent 가 점검을 시작하고 제출 가능한 건은 [제출] 버튼으로 바로 제출 요청을 보낸다. 표로 대신할 수 없는 질문(예외 결재 요청, 규정 질문, 가드레일)은 입력창 옆 [예시 질문]에 있다. 질문하면 답변(결제 표·요약 배지), 근거 규정 조항(contexts), 실행 단계(trace)가 함께 보이고, 제출·예외 결재 요청은 [승인]/[거절] 버튼으로 이어진다. 로그인 직원을 **부서장(강태호)**으로 바꾸면 시연용 결재함이 열려, 직원이 올린 예외 결재를 승인·반려할 수 있다(Agent 범위 밖, 모델 호출 없는 단순 API). 오른쪽 **영수증 첨부** 패널에서는 본인의 영수증 누락 결제에 아무 파일이나 골라 첨부할 수 있다(시연용, Agent 범위 밖). 파일 내용은 서버로 보내지 않고 이름·크기만 기록한다. 이걸로 점검 → 영수증 첨부 → 예외 결재 요청 → 부서장 승인 → 재점검 → 최종 제출까지 한 화면에서 시연할 수 있다. 시연을 처음 상태로 되돌리려면 `state/` 폴더를 지운다. (평가와 같은 숫자를 보려면 `.env` 에 `BASE_DATE=2026-10-21`)
@@ -67,29 +80,23 @@ curl -X POST localhost:8000/query -H "Content-Type: application/json" \
 ```
 제출 요청이나 예외 결재 요청을 하면 확인 문구(제출 요약 또는 사유서 초안)와 함께 승인 대기 상태로 멈추고, 같은 `X-Thread-Id` 로 "승인"을 보내면 실행된다.
 
-평가:
-```bash
-python evaluation/run_eval.py --round 2     # 인-아웃 세트 15건 → evaluation/round2_report.md
-python evaluation/hitl_scenarios.py         # 승인 흐름 여러 턴 검증 → evaluation/hitl_report.md
-
-pip install ragas==0.4.3 --no-deps          # RAGAS (의존성은 requirements.txt 에 포함)
-python evaluation/ragas_eval.py --round 2   # 저장된 답변으로 RAGAS 측정 → evaluation/ragas_report.md
-```
 
 ## RAGAS 평가 결과
-round2 결과 중 근거 조항이 있는 9건 (규정 질문 3건, 점검 질문 6건) · 평가 모델 Claude Sonnet 4.5 · 임베딩 Titan v2 → [ragas_report.md](evaluation/ragas_report.md)
+최종 코드(round3) 결과 중 근거 조항이 있는 9건 (규정 질문 3건, 점검 질문 6건) · 평가 모델 Claude Sonnet 4.5 · 임베딩 Titan v2 → [ragas_round3_report.md](evaluation/ragas_round3_report.md)
 
-- context_recall: 0.85
-- context_precision: 0.42
-- faithfulness: 0.74
-- answer_relevancy: 0.42
+- context_recall: 0.83
+- context_precision: 0.48
+- faithfulness: 0.71
+- answer_relevancy: 0.41
 
-| 지표 | 전체 | 규정 질문 | 점검 질문 | 보정 전 |
-|---|---|---|---|---|
-| context_recall | 0.85 | 0.83 | 0.86 | 0.42 |
-| context_precision | 0.42 | 0.67 | 0.30 | 0.48 |
-| faithfulness | 0.74 | 0.67 | 0.77 | 0.28 |
-| answer_relevancy | 0.42 | 0.52 | 0.37 | 0.24 |
+| 지표 | Round 3 전체 | 규정 질문 | 점검 질문 | Round 2 (벡터 검색만) | Round 2 보정 전 |
+|---|---|---|---|---|---|
+| context_recall | 0.83 | 0.83 | 0.83 | 0.85 | 0.42 |
+| context_precision | 0.48 | 0.67 | 0.38 | 0.42 | 0.48 |
+| faithfulness | 0.71 | 0.60 | 0.77 | 0.74 | 0.28 |
+| answer_relevancy | 0.41 | 0.52 | 0.36 | 0.42 | 0.24 |
+
+- **Round 2 → 3 (벡터 → 하이브리드 검색):** 차이는 평가 모델의 흔들림 수준이다. 점검 질문의 근거 조항은 검색이 아니라 코드가 똑같이 붙이는데도 context_precision 이 0.30 → 0.38 로 움직였으므로, ±0.08 정도는 측정 오차로 본다. 규정 문서가 조항 5개뿐이라 하이브리드의 이점이 지표에 드러나기 어렵고, "TR-102 양식" 같은 키워드 질의를 BM25 가 1순위로 잡는 효과는 단위 테스트로 확인했다. ([ragas_round2_report.md](evaluation/ragas_round2_report.md))
 
 - **측정 방식 보정:** 처음에는 contexts 에 규정 조항만 넣었는데(보정 전), 점검 답변의 근거는 규정 + `check_settlement` 결과 데이터다. 그래서 "식비 초과 13,000원" 같은 정확한 숫자까지 근거 없는 주장으로 세어 faithfulness 가 0.28 로 나왔다. contexts 에 Agent 가 실제로 받은 점검 결과(데이터에서 LLM 없이 재계산)를 넣고, answer_relevancy 의 질문 역생성 프롬프트를 한국어로 바꿔 다시 쟀다. 두 값을 모두 남긴다.
 - **context_precision 이 낮은 이유:** 점검 답변에는 항상 한도·기한 줄이 들어가 근거 조항으로 `경비 한도`·`정산 기한` 을 늘 붙이는데, reference(expected_traits)는 문항별 핵심 판정만 담고 있어 이 조항들이 관련 없는 근거로 계산된다.
@@ -97,11 +104,12 @@ round2 결과 중 근거 조항이 있는 9건 (규정 질문 3건, 점검 질�
 
 ## 인-아웃 세트 통과율 (자체 평가)
 - 1차 (Day 9): 7 / 15 통과 → [round1_report.md](evaluation/round1_report.md)
-- 2차 (Day 10 개선 후): 15 / 15 통과 → [round2_report.md](evaluation/round2_report.md)
-- 개선폭: +8건
-- 성공 기준(SERVICE.md 5번) 4개 모두 충족: 12건 이상 통과, 초과 금액 오차 0원, 영수증 누락 탐지 100%, 규정 날조 0건
+- 2차 (Day 10 개선 후): 15 / 15 통과 → [round2_report.md](evaluation/round2_report.md) (사람 확인 완료)
+- 개선폭: +8건 (판정 기준 수정 +4, Agent 개선 +4. 구성은 round2 리포트 끝에 정리)
+- 최종 회귀 (3차, 2·3차 개발·시연 기능·하이브리드 검색 반영 후): 15 / 15 통과 → [round3_report.md](evaluation/round3_report.md)
+- 성공 기준(SERVICE.md 5번) 4개 모두 충족: 12건 이상 통과, 초과 금액 오차 0원, 영수증 누락 탐지 100%, 규정 날조 0건 (round2·round3 모두)
 - 승인 흐름 시나리오 12개(최종 제출 6 + 예외 결재 요청 4 + 전체 흐름 2: 부서장 승인 / 영수증 첨부까지), 확인 항목 46/46 통과 ([hitl_report.md](evaluation/hitl_report.md))
-- 계산·승인 판정·결재 요청 대상 검증·부서장 결재·영수증 첨부·정산 현황 단위 테스트 89건 통과 (`pytest tests`, LLM 호출 없음)
+- 계산·승인 판정·결재 요청 대상 검증·부서장 결재·영수증 첨부·정산 현황·하이브리드 검색 단위 테스트 94건 통과 (`pytest tests`, LLM 호출 없음)
 
 인-아웃 세트는 공지 §4-4 의 7컬럼 뒤에 `employee` 컬럼을 추가했다. 이 서비스는 로그인 직원에 따라 조회 범위(본인 출장만)와 한도(평직원·임원)가 달라지므로, 문항마다 실행 직원을 고정해야 같은 조건으로 재현할 수 있다. 앞 7컬럼의 순서는 그대로 유지했다.
 
@@ -118,6 +126,7 @@ round2 결과 중 근거 조항이 있는 9건 (규정 질문 3건, 점검 질�
 - 사람 승인 도구는 승인 후 재개될 때 처음부터 다시 실행된다. 사유서 문단을 모델로 다시 만들면 직원이 본 초안과 저장되는 내용이 달라질 수 있어, 처음 만든 문단을 상태 파일에 보관해 재개 시 그대로 쓰게 했다.
 - 시연 중 이미 제출완료된 출장이 "기한 경과, 예외 결재 필요"로 보이는 모순을 발견했다. 제출일 없이 상태만 있어 기한을 오늘 기준으로 판정한 것이 원인이라, 제출완료 건은 제출일 기준으로 판정하고 남은 조치를 표시하지 않도록 고쳤다.
 - 3차 개발로 프롬프트가 길어진 뒤 "골프장 이용료도 정산돼?"에 규정을 검색하지 않고 "규정에 없다"고 답하는 회귀가 15건 재실행에서 잡혔다. 결론은 맞았지만 확인 없이 단정한 것이라, 규정 질문은 답하기 전에 반드시 검색하도록 지시를 추가했다. 통과한 문항을 지우지 않고 매번 전체를 다시 돌린 덕분에 잡혔다.
+- Dockerfile 을 만들며 Python 3.12 리눅스 기준으로 의존성을 검증하다가 두 가지를 잡았다. RAGAS 의존성 설치 때 `langchain-core` 가 1.6.9 → 1.6.13 으로 올라갔는데 requirements 에는 옛 버전이 남아 있었고, `networkx 3.7` 은 Python 3.12 이상만 지원했다. requirements 를 실제 테스트한 버전으로 맞추고 지원 버전을 3.12+ 로 명시했다.
 - RAGAS: `ragas 0.4.3` 은 Python 3.14 에서 테스트셋 생성용 의존성(scikit-network) 빌드가 실패하고, 최신 langchain-community 에서 삭제된 Vertex AI 모듈을 import 한다. 지표 계산에는 필요 없는 부분이라 의존성은 따로 설치하고, 평가 스크립트 안에서만 빈 모듈을 채워 넣어 해결했다.
 - Agent가 규정 검색을 동시에 여러 번 호출할 때 벡터 저장소가 중복 생성되던 버그(같은 조항이 두 번 검색돼 '예외 결재' 조항이 밀려남)를 잠금과 고정 ID로 수정.
 - 루프는 "한 번에 하나만 고치고 해당 문항만 재실행, 마지막에 전체 재실행으로 회귀 확인" 순서로 진행. 판정 기준을 바꿀 때는 Agent 재실행 없이 저장된 답변만 다시 채점(`--regrade`)해 기준 변경 효과와 모델 변경 효과를 분리했다.
@@ -133,18 +142,20 @@ round2 결과 중 근거 조항이 있는 9건 (규정 질문 3건, 점검 질�
 - RAGAS 의 reference 는 정답 문장 대신 expected_traits 로 대체했다. 정답 문장 컬럼을 따로 만들면 context_recall·precision 을 더 정확히 잴 수 있다.
 - 부서장 결재는 시연용 결재함(단순 API)으로만 구현했다. 실제로는 사내 결재 시스템과 연동해야 하며, Agent 의 사용자는 직원 본인으로 한정했다.
 - 영수증 첨부는 시연용 기록(파일 이름·크기)만 남긴다. 실제 파일 보관과 이미지 OCR 금액 대조, 인사·재무 담당자용 전 직원 조회, 해외 출장은 범위 밖으로 남겼다.
-- 트레이스는 로컬 JSONL 기록이다. 운영 환경이라면 LangSmith·LangFuse 같은 도구로 옮긴다.
+- 트레이스는 LangChain 콜백으로 직접 만든 기록기(Day 7 실습의 로컬 트레이서 방식)다. 외부 서비스 계정·키 없이 누구나 재현할 수 있고, 같은 기록을 API 응답 `trace` 로 돌려줘 화면에서 바로 볼 수 있어서 택했다. 운영 환경이라면 같은 콜백 지점에 LangSmith·LangFuse 를 붙여 장기 보관·검색을 한다.
+- Docker 이미지는 이 PC 에 Docker 가 없어 실제 빌드는 확인하지 못했다. 대신 Python 3.12 리눅스 기준으로 requirements 전체가 설치 가능한지 pip 로 검증했다.
 - 데이터는 전부 더미다.
 
 ## 핵심 코드 위치
 - `src/agent.py:96` — 메인 그래프 (`build_graph`: input_guard → agent → output_guard, refuse 분기)
 - `src/agent.py:23` — 시스템 프롬프트
-- `src/tools.py` — 도메인 도구 7개 (`check_settlement:199`, `submit_settlement:271`, `request_exception_approval:340`)
+- `src/tools.py` — 도메인 도구 7개 (`check_settlement:338`, `submit_settlement:413`, `request_exception_approval:482`)
 - `src/drafting.py` — 예외 결재 사유서 초안 (`polish_reason:24` LCEL 체인, `compose_request:30` 숫자는 코드가 기입)
 - `src/settlement.py:63` — 정산 점검 계산 (`check_trip`)
-- `src/retriever.py` — RAG 파이프라인 (`search:73`, 근거 조항 조회 `get_sections:67`)
+- `src/retriever.py` — RAG 파이프라인 (하이브리드 `search:116`, BM25 `bm25_rank:98`, 근거 조항 조회 `get_sections:69`)
 - `src/guards.py` — 입력·출력 가드레일
-- `src/api.py:72` — `POST /query`, 승인 대기 대화 재개
+- `src/api.py:75` — `POST /query`, 승인 대기 대화 재개
 - `web/index.html` — 시연 화면 (`GET /`, 외부 라이브러리 없는 단일 파일)
 - `src/tracer.py` — 트레이스 기록
 - `evaluation/run_eval.py` · `evaluation/hitl_scenarios.py` · `evaluation/ragas_eval.py` · `tests/`
+- `Dockerfile` · `run.sh` — 클린 환경 재현, 실행 명령 모음
