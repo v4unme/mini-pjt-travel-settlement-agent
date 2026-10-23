@@ -7,6 +7,38 @@
 - 핵심 원칙: 정산이므로 **금액·날짜는 오차 0원**. 계산은 모델이 아니라 코드가 한다
 - 상세 기획: [SERVICE.md](SERVICE.md) · 개발 규약: [CLAUDE.md](CLAUDE.md)
 
+### 업무 흐름 (직원 입장)
+카드 결제가 들어온 뒤부터 정산 제출까지다. 점검 결과에 따라 세 갈래로 안내하고, 조치가 끝나면 다시 점검한다. 초록 테두리는 Agent 처리, 보라 테두리는 끝까지 시연하기 위한 **시연용 기능(Agent 범위 밖, 모델 호출 없음)**, 빨간 점선은 **사람 승인** 단계다.
+
+```mermaid
+flowchart TD
+  A([출장 복귀]) --> B[카드 결제 내역이 DB에 들어옴<br/>식비 · 숙박 · 교통]
+  B --> C[직원이 정산 대상 항목 선택]
+  C --> D{{"Agent: 이번 출장 정산 점검해줘<br/>또는 현황 표에서 출장 클릭"}}
+  D --> E[결제 내역 + 근거 규정 조항으로 점검]
+  E --> F{점검 결과}
+  F -- 영수증 누락 --> G[누락 결제ID 안내]
+  G --> H[영수증 첨부<br/>파일 이름·크기만 기록]
+  H --> D
+  F -- 한도·기한 초과 --> I[사유를 듣고 사유서 초안 작성<br/>숫자는 코드가 기입]
+  I --> J{{직원 확인 · 승인}}
+  J -- 승인 --> K[부서장에게 예외 결재 요청<br/>상태: 요청됨]
+  J -- 거절 --> F
+  K --> L[부서장 결재함<br/>승인 / 반려]
+  L --> D
+  F -- 이상 없음 또는<br/>초과분 예외 승인 완료 --> M[제출 요약 제시<br/>건수 · 합계]
+  M --> N{{직원 최종 승인}}
+  N -- 승인 --> O([정산 제출 완료])
+  N -- 거절 --> P([제출하지 않음])
+
+  classDef agent stroke:#1f8a5b,stroke-width:2.5px
+  classDef demo stroke:#8a4fc2,stroke-width:2.5px
+  classDef hitl stroke:#c2413b,stroke-width:2px,stroke-dasharray:5 3
+  class D,E,G,I,K,M,O,P agent
+  class H,L demo
+  class J,N hitl
+```
+
 ## 활용한 패턴 (Day 1~7)
 | Day | 패턴 | 이 프로젝트에서 활용한 방법 |
 |---|---|---|
@@ -20,31 +52,87 @@
 | Day 7 | 평가 | 인-아웃 세트 자동 채점(숫자 정확 일치 + LLM-as-Judge 의미 판정), 계산 단위 테스트, 승인 흐름 시나리오, RAGAS 4개 지표 ([ragas_eval.py](evaluation/ragas_eval.py)) |
 
 ## 아키텍처
+시연 화면과 API 를 거쳐 LangGraph 그래프가 실행된다. 바깥 흐름은 `StateGraph` 로 직접 그리고, 가운데 Agent 노드는 `create_agent` 가 만든 모델 ↔ 도구 반복 그래프다. 가드레일은 모델이 건너뛸 수 없는 고정 단계다.
+
 ```mermaid
 flowchart LR
-  Q([POST /query]) --> IG[input_guard<br/>LCEL 구조화 출력 판정]
+  W[시연 화면<br/>web/index.html] --> Q([POST /query])
+  Q --> IG[input_guard<br/>LCEL 구조화 출력 판정]
   IG -- 정상 --> AG
-  IG -- 타인 조회 · 인젝션 --> RF[refuse<br/>고정 거절 문구] --> E([응답])
+  IG -- 타인 조회 · 인젝션 --> RF[refuse<br/>고정 거절 문구]
+  RF --> E([answer · contexts · trace])
   subgraph AG [agent · create_agent]
-    M[Claude Sonnet 4.5] <--> T[도구 7개]
+    direction TB
+    M[모델<br/>Claude Sonnet 4.5] <--> T[도구 7개]
   end
-  AG --> OG[output_guard<br/>카드번호 마스킹 · 안내 문구] --> E
-  T -. 최종 제출 · 예외 결재 요청 .-> H{{interrupt<br/>직원 승인 대기}}
+  AG --> OG[output_guard<br/>카드번호 마스킹<br/>점검 안내 문구]
+  OG --> E
+  T -. 제출 · 예외 결재 요청 .-> H{{interrupt<br/>직원 승인 대기}}
+  W --> S[시연용 API<br/>현황 표 · 결재함 · 영수증 첨부]
+
+  classDef guard stroke:#c2413b,stroke-width:2px,stroke-dasharray:5 3
+  classDef demo stroke:#8a4fc2,stroke-width:2.5px
+  class IG,RF,OG,H guard
+  class S demo
 ```
 
-| 도구 | 역할 | 데이터 |
-|---|---|---|
-| get_my_trips | 내 출장 목록 | trips.json (+ 제출 기록) |
-| get_trip_expenses | 출장 결제 내역 (카드번호 끝 4자리) | expenses.json |
-| search_policy | 규정 벡터 검색 (RAG) | policy/travel_policy.md |
-| check_settlement | 누락·한도·기한 점검 + 근거 조항 첨부 | settlement.py 계산 |
-| get_approval_status | 예외 결재 상태 | approvals.json |
-| submit_settlement | 재점검 → 직원 승인 → 제출 (HITL) | state/submissions.json |
-| request_exception_approval | 대상 검증 → 사유서 초안 → 직원 승인 → 부서장 결재 요청 (HITL) | state/approvals.json |
+| 구분 | 이름 | 역할 | 데이터 |
+|---|---|---|---|
+| Agent 도구 | get_my_trips | 내 출장 목록 | trips.json (+ 제출 기록) |
+| Agent 도구 | get_trip_expenses | 출장 결제 내역 (카드번호 끝 4자리) | expenses.json (+ 첨부 기록) |
+| Agent 도구 | search_policy | 규정 검색: 벡터 + BM25 하이브리드 (RRF) | policy/travel_policy.md |
+| Agent 도구 | check_settlement | 누락·한도·기한 점검 + 근거 조항 코드 첨부 | settlement.py 계산 |
+| Agent 도구 | get_approval_status | 예외 결재 상태 | approvals.json (+ 요청 기록) |
+| Agent 도구 | submit_settlement | 재점검 → 직원 승인 → 제출 (HITL) | state/submissions.json |
+| Agent 도구 | request_exception_approval | 대상 검증 → 사유서 초안 → 직원 승인 → 부서장 결재 요청 (HITL) | state/approvals.json |
+| 시연용 API | `GET /trips/mine` | 내 출장 정산 현황 표 (점검 계산 그대로) | — |
+| 시연용 API | `/approvals/inbox` · `/approvals/{id}/decision` | 부서장 결재함: 결재자 본인만 요청됨 건을 승인·반려 | state/approvals.json |
+| 시연용 API | `/receipts/missing` · `/receipts/{id}` | 영수증 첨부: 파일 내용은 보내지도 읽지도 않고 이름·크기만 기록 | state/receipts.json |
 
 - 계산 로직([settlement.py](src/settlement.py))은 LLM 호출이 없는 순수 함수다. 숙박은 나눗셈 없이 `결제 금액 − 1박 한도 × 박수` 로 계산해 원 단위 오차를 없앴다.
 - 사유서 초안의 대상·초과 금액·결제ID·결재자는 점검 결과 값을 코드가 넣고, 모델은 직원이 말한 사유를 문단으로 다듬기만 한다. 예외 결재 요청 대상(실제 초과 여부, 이미 요청·승인된 건)도 코드가 검증한다.
 - 제출·결재 요청 기록은 원본 데이터를 바꾸지 않고 `state/` 에 따로 남겨 평가를 항상 같은 조건에서 재현할 수 있다.
+
+### 점검 판정 규칙 (`check_settlement`)
+정산 대상으로 선택된 결제만 본다. 금액·날짜 계산은 [settlement.py](src/settlement.py) 가 하며, 경계 조건까지 단위 테스트로 고정했다.
+
+| 점검 | 단위 | 판정 기준 | 평직원 | 임원 |
+|---|---|---|---|---|
+| 영수증 누락 | 결제 항목 | 정산 대상인데 스캔본 미첨부 → 1건이라도 있으면 제출 불가 | — | — |
+| 식비 한도 | 날짜 | 같은 날 식비 합계 − 한도 | 70,000원 | 100,000원 |
+| 숙박 한도 | 결제 1건 | 결제 금액 − 1박 한도 × 박수 (나눗셈 없이 계산해 원 단위 오차 0) | 150,000원/박 | 200,000원/박 |
+| 교통비 한도 | 날짜 | 같은 날 교통비 합계 − 한도 | 100,000원 | 100,000원 |
+| 정산 기한 | 출장 건 | 복귀 다음 영업일부터 7영업일 (주말·공휴일 제외). 제출완료 건은 제출일 기준 | 공통 | 공통 |
+
+한도·기한 초과 항목은 예외 결재 상태에 따라 판정한다: 승인 → **초과지만 예외 승인 완료, 정산 가능** / 요청됨 → **결재 대기** / 반려·없음 → **예외 결재 필요**. 한도·기한 초과는 개인 부담이 아니라 사유서 + 부서장 예외 결재로 정산한다.
+
+### 사람 승인이 오가는 방식 (HITL)
+요청 body 는 `{"question"}` 만 받는다. 직원과 대화는 헤더로 구분하고, 승인 대기 중인 대화는 같은 `X-Thread-Id` 로 이어서 재개한다. 시연 화면에서는 [승인]/[거절] 버튼이 이 요청을 대신 보낸다.
+
+```mermaid
+sequenceDiagram
+  actor U as 직원
+  participant API as POST /query
+  participant G as 그래프
+  U->>API: "대전 출장 정산 제출해줘"<br/>X-Employee-Id, X-Thread-Id
+  API->>G: 실행
+  G->>G: 재점검 (누락 0건, 초과분 승인 완료 확인)
+  G-->>API: interrupt() · 제출 요약 (건수 · 합계)
+  API-->>U: answer: 제출 요약 + "승인 / 거절"
+  U->>API: "승인" (같은 X-Thread-Id)
+  API->>G: Command(resume="승인")
+  G->>G: 정산 상태 → 제출완료 (state/ 기록)
+  G-->>API: answer, contexts, trace
+  API-->>U: 제출 완료 안내
+```
+
+### 개발 단계
+| 단계 | 만든 것 | 상태 |
+|---|---|---|
+| 1차 | 더미 데이터·규정 문서, 조회 2개, 규정 검색, 점검, 가드레일 그래프 | 완료 |
+| 2차 | 결재 상태 조회, 최종 제출 (사람 승인) | 완료 |
+| 3차 | 사유서 작성 + 예외 결재 요청 (사람 승인) | 완료 |
+| 이후 | 시연 화면(현황 표·승인 버튼), 시연용 부서장 결재함·영수증 첨부, 하이브리드 검색, Dockerfile·run.sh | 완료 |
 
 ## 실행 방법
 Python 3.12 이상. `.env.example` 을 `.env` 로 복사해 AWS 키를 넣는다 (`BASE_DATE=2026-10-21` 이면 평가와 같은 숫자가 나온다).
