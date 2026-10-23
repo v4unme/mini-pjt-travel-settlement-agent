@@ -35,7 +35,8 @@ src/api.py           FastAPI 서버 (POST /query, 시연 화면 GET /, 직원 �
                      영수증은 파일 이름·크기만 받고 내용은 받지도 읽지도 않는다)
 web/index.html       시연 화면 (HTML·CSS·JS 단일 파일, 외부 라이브러리 없음. /query 규약을 그대로 호출)
 data/                더미 데이터 JSON 과 data/policy/ 규정 문서
-evaluation/          test_queries.csv(8컬럼, 아래 평가 규약), run_eval.py, round1_report.md, round2_report.md,
+evaluation/          test_queries.csv(8컬럼, 아래 평가 규약), run_eval.py, round1·round2·round3_report.md,
+                     ragas_eval.py·ragas_round{N}_report.md,
                      hitl_scenarios.py·hitl_report.md (사람 승인 여러 턴 대화 검증)
 state/               실행 중 생기는 기록: submissions.json(제출), approvals.json(이 Agent 로 요청한 예외 결재), drafts.json(승인 대기 중 사유서 문단), receipts.json(영수증 첨부 기록). 커밋 제외. data/ 원본은 바꾸지 않는다
 tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출 없음)
@@ -77,6 +78,7 @@ tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출
 - run_eval.py 는 `employee` 의 직원ID를 `X-Employee-Id` 로 넣어 문항을 실행한다
 - 문항마다 새 `X-Thread-Id` 로 실행한다 (이전 문항의 대화가 섞이지 않게)
 - 채점 기준일은 `BASE_DATE=2026-10-21` 로 고정한다
+- 라운드: round1(Day 9 기준선) · round2(Day 10 개선 후, **사람 확인 완료본**) · round3(최종 코드 회귀). round2 를 다시 실행하면 리포트의 사람 확인 칸과 개선폭 섹션이 지워지므로 다시 돌리지 않는다. 이후 재검증은 `--round 3` 이상으로 한다
 - expected_traits 채점
   - 원칙: **숫자는 엄격하게, 나머지는 의미만 맞으면 통과**
   - 숫자(정확 일치, 자동): trait 안의 금액(`13,000원`)·날짜(`2026-10-19`)·건수·박수·영업일(`2건`·`2박`·`7영업일`)·ID(`EXP-007`·`APR-001`)·카드번호. "1일 한도", "1박 단가" 같은 이름의 일부는 숫자 값이 아니므로 제외
@@ -104,7 +106,7 @@ tests/               test_settlement.py (settlement.py 계산 검증. LLM 호출
 
 ## 작업 방식
 - 계획을 먼저 보여 주고 승인받은 뒤 코드를 만든다
-- 개발 순서는 SERVICE.md 3번의 1차 → 2차 → 3차를 따른다. 앞 단계가 돌기 전에 다음 단계 도구를 만들지 않는다
+- 개발 순서는 SERVICE.md 3번의 1차 → 2차 → 3차를 따랐다 (모두 완료). 새 기능을 붙일 때도 계획 → 승인 → 구현 → 테스트 → 회귀 확인 순서를 지킨다
 - 만든 뒤에는 직접 실행해 결과를 보여 준다
 - 평가 루프에서는 한 번에 한 가지만 고친다
 - 답변은 한국어로 한다
